@@ -8,3 +8,5 @@ extern vex::motor frontRightDrive;
 extern vex::motor midRightDrive;
 extern vex::motor backRightDrive;
 extern vex::rotation odomPod;
+extern vex::inertial inertialSensor;
+    

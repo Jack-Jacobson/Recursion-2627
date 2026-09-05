@@ -10,4 +10,4 @@ vex::motor frontRightDrive(vex::PORT1, vex::gearSetting::ratio6_1, false);
 vex::motor midRightDrive(vex::PORT1, vex::gearSetting::ratio6_1, false);
 vex::motor backRightDrive(vex::PORT1, vex::gearSetting::ratio6_1, false);
 
-vex::rotation odomPod(vex::PORT1, false);
+vex::rotation odomPod(vex::PORT4, false);
