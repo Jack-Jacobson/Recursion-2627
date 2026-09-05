@@ -12,33 +12,53 @@
 
 using namespace vex;
 
-double odomMm = 0.0;
-double prevDeg = 0.0;
+struct Pose { double x = 0, y = 0, theta = 0; };
+static Pose pose;
 
 const double wheelDiameterMm = 50.8;
 const double wheelCircumferenceMm = M_PI * wheelDiameterMm;
+double prevOdomDeg = 0.0;
+double prevYawDeg = 0.0;
 
 void updateOdom() {
-    while(true){
-        double currDeg = odomPod.position(rotationUnits::deg);
-
-        double deltaDeg = currDeg - prevDeg;
-
+    while(true) {
+        double currOdomDeg = odomPod.position(rotationUnits::deg);
+        double deltaDeg = currOdomDeg - prevOdomDeg;
         double deltaMm = (deltaDeg / 360.0) * wheelCircumferenceMm;
-        odomMm += deltaMm;
 
-        prevDeg = currDeg;
-        
+        double currYawDeg = inertialSensor.heading();
+        double deltaYawDeg = currYawDeg - prevYawDeg;
+        if(deltaYawDeg > 180) deltaYawDeg -= 360;
+        else if(deltaYawDeg < -180) deltaYawDeg += 360;
+        double deltaTheta = deltaYawDeg * M_PI / 180.0;
+
+        double midTheta = pose.theta + deltaTheta * 0.5;
+        pose.x += deltaMm * cos(midTheta);
+        pose.y += deltaMm * sin(midTheta);
+        pose.theta += deltaTheta;
+
+        prevOdomDeg = currOdomDeg;
+        prevYawDeg = currYawDeg;
+
         this_thread::sleep_for(10);
     }
-    
 }
+
+
+
 
 int main() {
 
     odomPod.resetPosition();
     this_thread::sleep_for(50);
-    prevDeg = odomPod.position(rotationUnits::deg);
+    prevOdomDeg = odomPod.position(rotationUnits::deg);
+
+    inertialSensor.calibrate();
+    while(inertialSensor.isCalibrating()){
+        this_thread::sleep_for(10);
+        Brain.Screen.print("Calibrating Inertial Sensor...");
+    }
+    prevYawDeg = inertialSensor.heading();
 
     vex::thread odomThread(updateOdom);
 
@@ -46,7 +66,6 @@ int main() {
         
         Brain.Screen.clearScreen();
         Brain.Screen.setCursor(1, 1);
-        Brain.Screen.print("Odom: %.2f mm", odomMm);
         this_thread::sleep_for(20);
     }
 }
