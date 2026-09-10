@@ -89,12 +89,15 @@ void oneStickDrive() {
     spinDriveMotor(backRightDrive, rightPercent);
 }
 
-void twoStickDrive() {
-    const double leftInput = -Controller.Axis2.position(vex::percent);
-    const double rightInput = -Controller.Axis3.position(vex::percent);
+void splitArcadeDrive() {
+    const double forwardInput = -Controller.Axis1.position(vex::percent);
+    const double turnInput = -Controller.Axis3.position(vex::percent);
 
-    double leftPercent = applyDeadband(leftInput);
-    double rightPercent = applyDeadband(rightInput);
+    const double forwardPercent = applyDeadband(forwardInput);
+    const double turnPercent = applyDeadband(turnInput);
+
+    double leftPercent = forwardPercent + turnPercent;
+    double rightPercent = forwardPercent - turnPercent;
 
     leftPercent = clampToPercent(leftPercent);
     rightPercent = clampToPercent(rightPercent);
@@ -117,7 +120,7 @@ int main() {
         if (useOneStickDrive) {
             oneStickDrive();
         } else {
-            twoStickDrive();
+            splitArcadeDrive();
         }
     }
 }
