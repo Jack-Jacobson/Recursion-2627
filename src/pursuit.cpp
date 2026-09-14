@@ -19,9 +19,6 @@ int targetIndex = 0;
 static double prevOdomDeg = 0.0;
 static double prevYawDeg  = 0.0;
 
-// ---------------------------------------------------------------------------
-// Path helpers
-// ---------------------------------------------------------------------------
 
 Point getTarget() {
     return path[targetIndex];
@@ -34,9 +31,6 @@ bool reachedTarget(const Point& target, const Pose& pose) {
     return distance < waypointToleranceMm;
 }
 
-// ---------------------------------------------------------------------------
-// Angle helpers
-// ---------------------------------------------------------------------------
 
 double normalizeAngle(double angle) {
     while (angle >  M_PI) angle -= 2.0 * M_PI;
@@ -49,9 +43,6 @@ double headingErrorToTarget(const Point& target, const Pose& pose) {
     return normalizeAngle(targetAngle - pose.theta);
 }
 
-// ---------------------------------------------------------------------------
-// Odometry
-// ---------------------------------------------------------------------------
 
 void initOdom() {
     odomPod.resetPosition();
@@ -93,9 +84,7 @@ void updateOdom() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Drive
-// ---------------------------------------------------------------------------
+
 
 void driveToTarget(const Pose& robot, const Point& target) {
     double error = headingErrorToTarget(target, robot);
