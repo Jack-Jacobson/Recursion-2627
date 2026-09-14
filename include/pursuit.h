@@ -16,45 +16,60 @@ struct Point {
 };
 
 
-constexpr double wheelDiameterMm      = 50.8;                          // tracking wheel diameter
-constexpr double wheelCircumferenceMm = M_PI * wheelDiameterMm;        // mm travelled per full rotation
-constexpr double lookaheadMm          = 180.0;                         // pure-pursuit lookahead radius (not used yet)
-constexpr double waypointToleranceMm  = 20.0;                          // "close enough" radius for a waypoint
-constexpr double turnKp               = 2.5;                           // P gain: radians of error -> motor percent
-constexpr double forwardPowerPct      = 25.0;                          // base forward speed
-constexpr int    odomLoopMs           = 10;                            // odometry update period
+constexpr double wheelDiameterMm      = 50.8;                       
+constexpr double wheelCircumferenceMm = M_PI * wheelDiameterMm;       
+constexpr double lookaheadMm          = 180.0;                         
+constexpr double waypointToleranceMm  = 20.0;                          
+constexpr double turnKp               = 40.0;                          
+constexpr double forwardPowerPct      = 25.0;                          
+constexpr double maxPowerPct          = 100.0;                         
+constexpr int    odomLoopMs           = 10;                            
 
-extern Pose pose;            // updated by updateOdom() on its own thread
-extern Point path[];         // the waypoints to follow
-extern const int pathLength; // number of waypoints in path[]
-extern int targetIndex;      // which waypoint we're currently chasing
+extern Pose pose;           
+extern Point path[];        
+extern const int pathLength; 
+extern int targetIndex;     
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+constexpr double trackWidthMm   = 292.0;   // LEFT CENTER TO RIGHT CENTER
+constexpr double driveWheelMm   = 82.55;   // WHEEL DIAMATER 
+constexpr double wheelPerMotor  = 0.75;    // WHEEL REVOLUTION BY MOTOR REVOLUTION
+constexpr double maxMotorRpm    = 600.0;   // ratio6_1 = blue cartridge
 
-// Current waypoint we are driving toward.
+constexpr double maxVelMmS         = 1200.0;  // top speed 
+constexpr double maxAccelMmS2      = 2000.0;  // accel + decel limit
+constexpr double maxLatAccelMmS2   = 1500.0;  // Max corner speed before slowing
+constexpr double endToleranceMm    = 25.0;  // Tolerence
+
+struct PathProgress {
+    int    segment = 0;    // INDEX
+    double t       = 0.0;  // FRACTOIN
+};
+
+void  followPath();
+
+void  followPath();
+
+
+Pose getPose();
+
 Point getTarget();
 
-// True once the robot is within waypointToleranceMm of the target.
 bool reachedTarget(const Point& target, const Pose& pose);
 
-// Wrap any angle (radians) into the range (-PI, PI].
 double normalizeAngle(double angle);
 
-// Signed angle (radians) the robot must turn to face the target.
+
 double headingErrorToTarget(const Point& target, const Pose& pose);
 
-// Reset the sensors and prime the odometry deltas. Call once before starting
-// the odometry thread.
+
 void initOdom();
 
-// Infinite loop: integrates encoder + inertial readings into `pose`.
-// Intended to be run on its own vex::thread.
+
 void updateOdom();
 
-// One iteration of the drive controller: point-and-shoot toward `target`.
+
+void setDrive(double left, double right);
+
 void driveToTarget(const Pose& robot, const Point& target);
 
-// Cut power to all six drive motors.
 void stopDrive();
