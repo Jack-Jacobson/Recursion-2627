@@ -17,20 +17,5 @@ int main() {
 
     vex::thread odomThread(updateOdom);
 
-    while (true) {
-        Point target = getTarget();
-
-        if (reachedTarget(target, pose)) {
-            targetIndex++;
-            if (targetIndex >= pathLength) {
-                stopDrive();
-                break;
-            }
-            continue;
-        }
-
-        driveToTarget(pose, target);
-
-        this_thread::sleep_for(20);
-    }
+    followPath();
 }

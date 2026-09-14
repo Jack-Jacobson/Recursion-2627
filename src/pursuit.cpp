@@ -22,8 +22,16 @@ extern const int pathLength = sizeof(path) / sizeof(path[0]);
 int targetIndex = 0;
 
 static double prevOdomDeg = 0.0;
-static double prevYawDeg  = 0.0;
 
+static vex::mutex poseMutex;
+
+
+Pose getPose() {
+    poseMutex.lock();
+    Pose snapshot = pose;
+    poseMutex.unlock();
+    return snapshot;
+}
 
 Point getTarget() {
     return path[targetIndex];
@@ -51,6 +59,10 @@ double headingErrorToTarget(const Point& target, const Pose& pose) {
 
 
 
+static double inertialThetaRad() {
+    return -inertialSensor.rotation(rotationUnits::deg) * M_PI / 180.0;
+}
+
 void initOdom() {
     odomPod.resetPosition();
     this_thread::sleep_for(50);
@@ -61,7 +73,12 @@ void initOdom() {
         this_thread::sleep_for(10);
         Brain.Screen.print("Calibrating Inertial Sensor...");
     }
-    prevYawDeg = inertialSensor.heading();
+
+    poseMutex.lock();
+    pose.x = 0;
+    pose.y = 0;
+    pose.theta = inertialThetaRad();
+    poseMutex.unlock();
 }
 
 void updateOdom() {
@@ -69,33 +86,31 @@ void updateOdom() {
         double currOdomDeg = odomPod.position(rotationUnits::deg);
         double deltaDeg    = currOdomDeg - prevOdomDeg;
         double deltaMm     = (deltaDeg / 360.0) * wheelCircumferenceMm;
+        prevOdomDeg        = currOdomDeg;
 
-        double currYawDeg  = inertialSensor.heading();
-        double deltaYawDeg = currYawDeg - prevYawDeg;
-        if      (deltaYawDeg >  180) deltaYawDeg -= 360;
-        else if (deltaYawDeg < -180) deltaYawDeg += 360;
-        double deltaTheta  = deltaYawDeg * M_PI / 180.0;
+        double currTheta = inertialThetaRad();
+
+        poseMutex.lock();
+        double deltaTheta = currTheta - pose.theta;
 
         double midTheta = pose.theta + deltaTheta * 0.5;
-        pose.x     += deltaMm * cos(midTheta);
-        pose.y     += deltaMm * sin(midTheta);
-        pose.theta += deltaTheta;
-
-        prevOdomDeg = currOdomDeg;
-        prevYawDeg  = currYawDeg;
+        pose.x    += deltaMm * cos(midTheta);
+        pose.y    += deltaMm * sin(midTheta);
+        pose.theta = currTheta;
+        poseMutex.unlock();
 
         this_thread::sleep_for(odomLoopMs);
     }
 }
 
-void driveToTarget(const Pose& robot, const Point& target) {
-    double error = headingErrorToTarget(target, robot);
+void setDrive(double left, double right) {
 
-    double turnPower    = error * turnKp;
-    double forwardPower = forwardPowerPct;
-
-    double left  = forwardPower - turnPower;
-    double right = forwardPower + turnPower;
+    double peak = fmax(fabs(left), fabs(right));
+    if (peak > maxPowerPct) {
+        double scale = maxPowerPct / peak;
+        left  *= scale;
+        right *= scale;
+    }
 
     frontLeftDrive.spin(directionType::fwd,  left,  velocityUnits::pct);
     midLeftDrive.spin(directionType::fwd,    left,  velocityUnits::pct);
@@ -104,6 +119,14 @@ void driveToTarget(const Pose& robot, const Point& target) {
     frontRightDrive.spin(directionType::fwd, right, velocityUnits::pct);
     midRightDrive.spin(directionType::fwd,   right, velocityUnits::pct);
     backRightDrive.spin(directionType::fwd,  right, velocityUnits::pct);
+}
+
+void driveToTarget(const Pose& robot, const Point& target) {
+    double error = headingErrorToTarget(target, robot);
+
+    double turnPower = error * turnKp;
+
+    setDrive(forwardPowerPct - turnPower, forwardPowerPct + turnPower);
 }
 
 void stopDrive() {
@@ -177,4 +200,84 @@ static double mmsToPct(double mmPerSec) {
 void driveWithCurvature(double v, double kappa) {
     double offset = v * kappa * (trackWidthMm / 2.0);
     setDrive(mmsToPct(v - offset), mmsToPct(v + offset));
+}
+
+double distanceToPathEnd() {
+    Point A = path[progress.segment];
+    Point B = path[progress.segment + 1];
+
+    double dx = B.x - A.x;
+    double dy = B.y - A.y;
+    double total = sqrt(dx*dx + dy*dy) * (1.0 - progress.t);
+
+    for (int i = progress.segment + 1; i < pathLength - 1; i++) {
+        double sx = path[i + 1].x - path[i].x;
+        double sy = path[i + 1].y - path[i].y;
+        total += sqrt(sx*sx + sy*sy);
+    }
+    return total;
+}
+
+double targetVelocity(double kappa, double distLeft, double prevVel, double dt) {
+    double v = maxVelMmS;
+
+    if (fabs(kappa) > 1e-6)
+        v = fmin(v, sqrt(maxLatAccelMmS2 / fabs(kappa)));
+
+    v = fmin(v, sqrt(2.0 * maxAccelMmS2 * fmax(distLeft, 0.0)));
+    v = fmin(v, prevVel + maxAccelMmS2 * dt);
+
+    return fmax(v, 0.0);
+}
+
+void turnToFace(const Point& target) {
+    while (true) {
+        Pose robot = getPose();
+        double error = headingErrorToTarget(target, robot);
+        if (fabs(error) < startTurnToleranceRad) break;
+
+        double power = error * turnKp;
+        if (fabs(power) < minTurnPct) power = (power > 0.0) ? minTurnPct : -minTurnPct;
+
+        setDrive(-power, power);
+        this_thread::sleep_for(10);
+    }
+    stopDrive();
+}
+
+void followPath() {
+    progress = PathProgress();
+
+    turnToFace(path[1]);
+
+    double vel = 0.0;
+    const double dt = controlLoopMs / 1000.0;
+
+    while (true) {
+        Pose   robot = getPose();
+        Point  look;
+        double kappa;
+        double distLeft;
+
+        if (findLookaheadPoint(robot, lookaheadMm, look)) {
+            kappa    = curvatureTo(robot, look);
+            distLeft = distanceToPathEnd();
+        } else {
+            Point endPt = path[pathLength - 1];
+            double dx = endPt.x - robot.x;
+            double dy = endPt.y - robot.y;
+            distLeft = sqrt(dx*dx + dy*dy);
+
+            if (distLeft < endToleranceMm) break;
+
+            kappa = curvatureTo(robot, endPt);
+        }
+
+        vel = targetVelocity(kappa, distLeft, vel, dt);
+        driveWithCurvature(vel, kappa);
+
+        this_thread::sleep_for((int)controlLoopMs);
+    }
+
+    stopDrive();
 }
