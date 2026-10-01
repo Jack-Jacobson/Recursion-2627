@@ -12,10 +12,14 @@
 
 using namespace vex;
 
+vex::motor lift1(vex::PORT1, false);
+vex::motor lift2(vex::PORT2, true);
+vex::motor lift3(vex::PORT3, false);
+
 int main() {
-    initOdom();
 
-    vex::thread odomThread(updateOdom);
-
-    followPath();
+  initOdom();
+  vex::thread odomThread(updateOdom);
+  followPath();
+  
 }

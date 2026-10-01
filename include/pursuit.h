@@ -20,7 +20,7 @@ constexpr double wheelDiameterMm      = 50.8;
 constexpr double wheelCircumferenceMm = M_PI * wheelDiameterMm;       
 constexpr double lookaheadMm          = 180.0;                         
 constexpr double waypointToleranceMm  = 20.0;                          
-constexpr double turnKp               = 40.0;                          
+constexpr double turnKp               = 4.0;                          
 constexpr double forwardPowerPct      = 25.0;                          
 constexpr double maxPowerPct          = 100.0;                         
 constexpr int    odomLoopMs           = 10;                            
@@ -43,6 +43,38 @@ constexpr double endToleranceMm    = 25.0;  // Tolerence
 constexpr double startTurnToleranceRad = 0.35;
 constexpr double minTurnPct            = 8.0;
 constexpr double controlLoopMs         = 20.0;
+
+// Field-absolute heading (radians) the robot is physically facing when placed
+// on the field before autonomous starts. Convention matches atan2 in
+// headingErrorToTarget(): 0 = facing +x, positive = CCW toward +y.
+// Set this to match wherever you physically point the robot before each run.
+constexpr double startHeadingRad = 0.0;
+
+// Prints live pose/heading-error/curvature data to the console (visible in
+// VEXcode's terminal while connected via USB) so you can see what the
+// controller thinks is happening in real time.
+// Set to false once you're done debugging - printing every loop is slow.
+constexpr bool debugTelemetry = true;
+
+// How many control loops between console prints during followPath() (each
+// loop is controlLoopMs = 20ms). 1 = every loop (finest resolution, but
+// printing/flushing over USB can itself add loop delay - watch for that if
+// you set this to 1). 2-3 is usually enough to catch short stalls/bursts
+// without flooding the console.
+constexpr int debugPrintLoopInterval = 2;
+
+// Minimum commanded drive speed (mm/s) whenever the robot should be moving
+// at all. targetVelocity()'s accel ramp starts at 0 and climbs slowly, but
+// very low speeds (e.g. the original 40mm/s ~= 2.4% motor power) often
+// aren't enough to overcome static friction, so the robot just sits there
+// while the planned velocity keeps climbing - then lurches once the plan
+// finally catches up to something that actually moves it. This floor skips
+// straight to a speed that reliably moves your robot. It's capped by the
+// deceleration-to-target distance internally, so it won't stop the robot
+// from slowing down and stopping cleanly at the end of the path.
+// Start around 200-300 and tune from testing: lower if the robot lurches
+// at the very start, raise if it still doesn't move right away.
+constexpr double minVelocityMmS = 250.0;
 
 struct PathProgress {
     int    segment = 0;    // INDEX

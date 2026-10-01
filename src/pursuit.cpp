@@ -14,8 +14,7 @@ Pose pose;
 Point path[] = {
     {0.0,   0.0},
     {300.0, 0.0},
-    {300.0, 250.0},
-    {700.0, 250.0}
+    {300.0, 300.0}
 };
 extern const int pathLength = sizeof(path) / sizeof(path[0]);
 
@@ -43,8 +42,6 @@ bool reachedTarget(const Point& target, const Pose& pose) {
     double distance = sqrt(dx * dx + dy * dy);
     return distance < waypointToleranceMm;
 }
-
-
 
 double normalizeAngle(double angle) {
     while (angle >  M_PI) angle -= 2.0 * M_PI;
@@ -75,10 +72,16 @@ void initOdom() {
     }
 
     poseMutex.lock();
-    pose.x = 0;
-    pose.y = 0;
-    pose.theta = inertialThetaRad();
+    pose.x     = path[0].x;
+    pose.y     = path[0].y;
+    pose.theta = normalizeAngle(startHeadingRad + inertialThetaRad());
     poseMutex.unlock();
+
+    if (debugTelemetry) {
+        printf("init pose x:%.1f y:%.1f hdg:%.1f\n",
+               pose.x, pose.y, pose.theta * 180.0 / M_PI);
+        fflush(stdout);
+    }
 }
 
 void updateOdom() {
@@ -221,11 +224,23 @@ double distanceToPathEnd() {
 double targetVelocity(double kappa, double distLeft, double prevVel, double dt) {
     double v = maxVelMmS;
 
+    double curveCap = maxVelMmS;
     if (fabs(kappa) > 1e-6)
-        v = fmin(v, sqrt(maxLatAccelMmS2 / fabs(kappa)));
+        curveCap = sqrt(maxLatAccelMmS2 / fabs(kappa));
+    v = fmin(v, curveCap);
 
-    v = fmin(v, sqrt(2.0 * maxAccelMmS2 * fmax(distLeft, 0.0)));
+    double decelCap = sqrt(2.0 * maxAccelMmS2 * fmax(distLeft, 0.0));
+    v = fmin(v, decelCap);
+
     v = fmin(v, prevVel + maxAccelMmS2 * dt);
+
+    // Don't let the accel ramp linger at a speed too low to actually move
+    // the robot. Cap the floor at BOTH decelCap and curveCap so this never
+    // overrides slowing down for a tight corner or stopping cleanly at the
+    // end - it only helps the "haven't ramped up from a stop yet" case.
+    if (v > 0.0 && v < minVelocityMmS) {
+        v = fmin(minVelocityMmS, fmin(curveCap, decelCap));
+    }
 
     return fmax(v, 0.0);
 }
@@ -234,6 +249,13 @@ void turnToFace(const Point& target) {
     while (true) {
         Pose robot = getPose();
         double error = headingErrorToTarget(target, robot);
+
+        if (debugTelemetry) {
+            printf("turn hdg:%.1f err:%.1f\n",
+                   robot.theta * 180.0 / M_PI, error * 180.0 / M_PI);
+            fflush(stdout);
+        }
+
         if (fabs(error) < startTurnToleranceRad) break;
 
         double power = error * turnKp;
@@ -252,16 +274,19 @@ void followPath() {
 
     double vel = 0.0;
     const double dt = controlLoopMs / 1000.0;
+    int debugCounter = 0;
 
     while (true) {
         Pose   robot = getPose();
         Point  look;
+        Point  target = path[pathLength - 1];
         double kappa;
         double distLeft;
 
         if (findLookaheadPoint(robot, lookaheadMm, look)) {
             kappa    = curvatureTo(robot, look);
             distLeft = distanceToPathEnd();
+            target   = look;
         } else {
             Point endPt = path[pathLength - 1];
             double dx = endPt.x - robot.x;
@@ -271,10 +296,22 @@ void followPath() {
             if (distLeft < endToleranceMm) break;
 
             kappa = curvatureTo(robot, endPt);
+            target = endPt;
         }
 
         vel = targetVelocity(kappa, distLeft, vel, dt);
         driveWithCurvature(vel, kappa);
+
+        if (debugTelemetry && (debugCounter++ % debugPrintLoopInterval == 0)) {
+            double targetHeading = atan2(target.y - robot.y, target.x - robot.x);
+            printf("seg:%d robot:(%.1f, %.1f) hdg:%.1f target:(%.1f, %.1f) tHead:%.1f k:%.4f v:%.0f\n",
+                   progress.segment, robot.x, robot.y,
+                   robot.theta * 180.0 / M_PI,
+                   target.x, target.y,
+                   targetHeading * 180.0 / M_PI,
+                   kappa, vel);
+            fflush(stdout);
+        }
 
         this_thread::sleep_for((int)controlLoopMs);
     }

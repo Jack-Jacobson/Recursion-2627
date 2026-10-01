@@ -1,6 +1,7 @@
 #include "vex.h"
 
 extern vex::brain Brain;
+extern vex::controller Controller;
 extern vex::motor frontLeftDrive;
 extern vex::motor midLeftDrive;
 extern vex::motor backLeftDrive;
