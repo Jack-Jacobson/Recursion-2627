@@ -7,7 +7,7 @@ if not path_input:
 
 text = Path(path_input).read_text(encoding="utf-8")
 point_lines = []
-
+    
 for raw_line in text.splitlines():
     line = raw_line.strip()
     if not line or line.startswith("#"):
