@@ -10,11 +10,12 @@
 using namespace vex;
 
 Pose pose;
-
 Point path[] = {
-    {0, 0},
-    {1000, 0},
-    {1000, -800}
+    {-1862.6, -12.8},  {-1812.9, -8.0},   {-1762.9, -5.5},   {-1712.9, -5.5},   {-1663.0, -8.2},
+    {-1613.4, -13.9},  {-1564.2, -23.0},  {-1515.9, -35.7},  {-1468.8, -52.5},  {-1423.6, -73.8},
+    {-1380.8, -99.7},  {-1341.4, -130.4}, {-1306.2, -165.8}, {-1275.8, -205.4}, {-1250.5, -248.5},
+    {-1230.4, -294.2}, {-1215.4, -341.9}, {-1205.0, -390.8}, {-1199.0, -440.4}, {-1196.6, -490.3},
+    {-1197.5, -540.3}, {-1200.6, -586.0}
 };
 extern const int pathLength = sizeof(path) / sizeof(path[0]);
 
@@ -106,22 +107,36 @@ void updateOdom() {
     }
 }
 
-void setDrive(double left, double right) {
+// Raw voltage output. Bypasses the motors' internal velocity PID, which is
+// what added the ~150-250 ms of lag. If either side exceeds the limit both
+// are scaled together so the left/right ratio (i.e. curvature) is preserved.
+void setDriveVolts(double leftVolts, double rightVolts) {
+    double peak = fmax(fabs(leftVolts), fabs(rightVolts));
+    if (peak > maxDriveVolts) {
+        double scale = maxDriveVolts / peak;
+        leftVolts  *= scale;
+        rightVolts *= scale;
+    }
 
+    frontLeftDrive.spin(directionType::fwd,  leftVolts,  voltageUnits::volt);
+    midLeftDrive.spin(directionType::fwd,    leftVolts,  voltageUnits::volt);
+    backLeftDrive.spin(directionType::fwd,   leftVolts,  voltageUnits::volt);
+
+    frontRightDrive.spin(directionType::fwd, rightVolts, voltageUnits::volt);
+    midRightDrive.spin(directionType::fwd,   rightVolts, voltageUnits::volt);
+    backRightDrive.spin(directionType::fwd,  rightVolts, voltageUnits::volt);
+}
+
+// Percent-of-voltage wrapper (100% = maxDriveVolts).
+void setDrive(double left, double right) {
     double peak = fmax(fabs(left), fabs(right));
     if (peak > maxPowerPct) {
         double scale = maxPowerPct / peak;
         left  *= scale;
         right *= scale;
     }
-
-    frontLeftDrive.spin(directionType::fwd,  left,  velocityUnits::pct);
-    midLeftDrive.spin(directionType::fwd,    left,  velocityUnits::pct);
-    backLeftDrive.spin(directionType::fwd,   left,  velocityUnits::pct);
-
-    frontRightDrive.spin(directionType::fwd, right, velocityUnits::pct);
-    midRightDrive.spin(directionType::fwd,   right, velocityUnits::pct);
-    backRightDrive.spin(directionType::fwd,  right, velocityUnits::pct);
+    setDriveVolts(left  * maxDriveVolts / 100.0,
+                  right * maxDriveVolts / 100.0);
 }
 
 void driveToTarget(const Pose& robot, const Point& target) {
@@ -133,12 +148,20 @@ void driveToTarget(const Pose& robot, const Point& target) {
 }
 
 void stopDrive() {
-    frontLeftDrive.stop();
-    midLeftDrive.stop();
-    backLeftDrive.stop();
-    frontRightDrive.stop();
-    midRightDrive.stop();
-    backRightDrive.stop();
+    // Voltage mode has no velocity loop holding the robot back, so actively
+    // brake instead of coasting past the target.
+    frontLeftDrive.stop(brakeType::brake);
+    midLeftDrive.stop(brakeType::brake);
+    backLeftDrive.stop(brakeType::brake);
+    frontRightDrive.stop(brakeType::brake);
+    midRightDrive.stop(brakeType::brake);
+    backRightDrive.stop(brakeType::brake);
+}
+
+// Speed-scaled lookahead: short when slow (strong correction), long when
+// fast (stable). Deliberately NOT shortened near the end of the path.
+double lookaheadFor(double velMmS) {
+    return fmin(fmax(velMmS * lookaheadTimeS, minLookaheadMm), lookaheadMm);
 }
 
 static PathProgress progress;
@@ -236,23 +259,105 @@ double curvatureTo(const Pose& robot, const Point& look) {
     return 2.0 * localY / lenSq;
 }
 
-static double mmsToPct(double mmPerSec) {
-    double wheelRps = mmPerSec / (M_PI * driveWheelMm);
-    double motorRpm = wheelRps * 60.0 / wheelPerMotor;
-    return motorRpm / maxMotorRpm * 100.0;
+// Measured wheel surface speed (mm/s) of one drive side, from motor encoders.
+static double sideVelocityMmS(motor& a, motor& b, motor& c) {
+    double rpm = (a.velocity(velocityUnits::rpm) +
+                  b.velocity(velocityUnits::rpm) +
+                  c.velocity(velocityUnits::rpm)) / 3.0;
+    return rpm * wheelPerMotor / 60.0 * M_PI * driveWheelMm;
+}
+
+// volts = kS*sign(v) + kV*v + kA*a + kP*(v - measured)
+static double wheelVolts(double targetVel, double targetAccel, double measuredVel) {
+    double volts = driveKv * targetVel
+                 + driveKa * targetAccel
+                 + driveKp * (targetVel - measuredVel);
+    if (fabs(targetVel) > 1e-3) volts += copysign(driveKs, targetVel);
+    return volts;
+}
+
+static double prevLeftTargetMmS  = 0.0;
+static double prevRightTargetMmS = 0.0;
+
+// Recent headings, used to measure the actual turn rate.
+static double headingHist[yawRateWindow + 1];
+static int    headingHistCount = 0;
+static int    headingHistIdx   = 0;
+static double yawErrIntegral   = 0.0;   // rad: commanded heading change - actual
+
+static void resetDriveFeedforward() {
+    prevLeftTargetMmS  = 0.0;
+    prevRightTargetMmS = 0.0;
+    headingHistCount   = 0;
+    headingHistIdx     = 0;
+    yawErrIntegral     = 0.0;
+}
+
+// Measured yaw rate (rad/s, CCW +) from the gyro heading over the last
+// yawRateWindow loops. Returns false until enough samples exist.
+static bool measuredYawRate(double& out) {
+    double theta = getPose().theta;
+    headingHist[headingHistIdx] = theta;
+    int oldest = (headingHistIdx + 1) % (yawRateWindow + 1);
+    headingHistIdx = oldest;
+    if (headingHistCount < yawRateWindow + 1) {
+        headingHistCount++;
+        if (headingHistCount < yawRateWindow + 1) return false;
+    }
+    double dTheta = normalizeAngle(theta - headingHist[oldest]);
+    out = dTheta / (yawRateWindow * controlLoopMs / 1000.0);
+    return true;
 }
 
 void driveWithCurvature(double v, double kappa) {
-    double offset = v * kappa * (trackWidthMm / 2.0);
-    setDrive(mmsToPct(v - offset), mmsToPct(v + offset));
+    double offset = v * kappa * curvatureGain * (trackWidthMm / 2.0);
+    double leftTarget  = v - offset;
+    double rightTarget = v + offset;
+
+    // Per-wheel acceleration of the commanded profile, for the kA term.
+    const double dt = controlLoopMs / 1000.0;
+    double leftAccel  = (leftTarget  - prevLeftTargetMmS)  / dt;
+    double rightAccel = (rightTarget - prevRightTargetMmS) / dt;
+    leftAccel  = fmin(fmax(leftAccel,  -maxFeedforwardAccelMmS2), maxFeedforwardAccelMmS2);
+    rightAccel = fmin(fmax(rightAccel, -maxFeedforwardAccelMmS2), maxFeedforwardAccelMmS2);
+    prevLeftTargetMmS  = leftTarget;
+    prevRightTargetMmS = rightTarget;
+
+    double leftMeas  = sideVelocityMmS(frontLeftDrive,  midLeftDrive,  backLeftDrive);
+    double rightMeas = sideVelocityMmS(frontRightDrive, midRightDrive, backRightDrive);
+
+    double leftV  = wheelVolts(leftTarget,  leftAccel,  leftMeas);
+    double rightV = wheelVolts(rightTarget, rightAccel, rightMeas);
+
+    // Gyro yaw-rate correction: if the robot is turning slower than commanded
+    // (positive error = needs more CCW/left turn), speed up the right side and
+    // slow the left.
+    // P handles fast lag, I removes a constant pull (e.g. one side has more
+    // friction), which P alone only partly cancels.
+    double yawMeas;
+    if (measuredYawRate(yawMeas)) {
+        double yawErr = v * kappa - yawMeas;   // rad/s
+        yawErrIntegral += yawErr * dt;
+        // Anti-windup: I term alone may never exceed the clamp.
+        if (yawRateKi > 0.0) {
+            double iMax = yawRateMaxVolts / yawRateKi;
+            yawErrIntegral = fmin(fmax(yawErrIntegral, -iMax), iMax);
+        }
+        double corr = yawRateKp * yawErr + yawRateKi * yawErrIntegral;
+        corr = fmin(fmax(corr, -yawRateMaxVolts), yawRateMaxVolts);
+        leftV  -= corr;
+        rightV += corr;
+    }
+
+    setDriveVolts(leftV, rightV);
 }
 
 // Distance left along the path, measured straight to the end of the current
-// segment (NOT from the lookahead point, which is lookaheadMm ahead). Using
-// the true distance to the segment end instead of a clamped projection keeps
-// the value honest when the robot has drifted off the path - a clamped
-// projection reports 0 remaining while the robot is still far away, which
-// makes the deceleration planner stop short of tolerance.
+// segment (NOT from the lookahead point). Using the true distance to the
+// segment end instead of a clamped projection keeps the value honest when
+// the robot has drifted off the path - a clamped projection reports 0
+// remaining while the robot is still far away, which makes the deceleration
+// planner stop short of tolerance.
 static int robotSegment = 0;
 
 double distanceToPathEnd(const Pose& robot) {
@@ -270,9 +375,7 @@ double distanceToPathEnd(const Pose& robot) {
     }
 
     for (int i = seg + 1; i < pathLength - 1; i++) {
-        double sx = path[i + 1].x - path[i].x;
-        double sy = path[i + 1].y - path[i].y;
-        total += sqrt(sx*sx + sy*sy);
+        total += segmentLength(i);
     }
     return total;
 }
@@ -301,8 +404,8 @@ static void updateRobotSegment(const Pose& robot) {
 // Speed limit from upcoming corners. Pure pursuit only sees a corner once the
 // lookahead wraps it, which is too late to brake from full speed, so the
 // robot used to overshoot and then S-curve back. Instead, estimate the arc
-// pure pursuit will cut through each corner (tangent arc starting about half
-// a lookahead before it) and start braking early enough to reach that speed.
+// pure pursuit will cut through each corner and start braking early enough
+// to reach that speed.
 double cornerSpeedCap(const Pose& robot) {
     double cap = maxVelMmS;
 
@@ -315,11 +418,17 @@ double cornerSpeedCap(const Pose& robot) {
         double turn = fabs(normalizeAngle(atan2(by, bx) - atan2(ay, ax)));
         turn = fmin(turn, cornerMaxAngleRad);
 
-        double kCorner = 2.0 * tan(turn / 2.0) / lookaheadMm;
+        // The arc cut through the corner depends on the lookahead, which now
+        // depends on speed. Iterate a few times to find a consistent speed.
+        double tanHalf = tan(turn / 2.0);
         double vCorner = maxVelMmS;
-        if (kCorner > 1e-6) {
-            vCorner = sqrt(maxLatAccelMmS2 / kCorner);
-            vCorner = fmin(vCorner, maxWheelVelMmS / (1.0 + kCorner * trackWidthMm / 2.0));
+        if (tanHalf > 1e-6) {
+            for (int iter = 0; iter < 3; iter++) {
+                double kCorner = 2.0 * tanHalf / lookaheadFor(vCorner);
+                double vc = sqrt(maxLatAccelMmS2 / kCorner);
+                vc = fmin(vc, maxWheelVelMmS / (1.0 + kCorner * trackWidthMm / 2.0));
+                vCorner = fmin(vc, maxVelMmS);
+            }
         }
         vCorner = fmax(vCorner, minVelocityMmS);
 
@@ -337,8 +446,8 @@ double targetVelocity(double kappa, double distLeft, double prevVel, double dt) 
         curveCap = sqrt(maxLatAccelMmS2 / fabs(kappa));
 
     // The outer wheel runs at v * (1 + |kappa| * trackWidth/2). If that
-    // exceeds what the motors can do, setDrive scales both sides down and the
-    // robot silently tracks a different curvature than planned.
+    // exceeds what the motors can do, setDriveVolts scales both sides down
+    // and the robot silently tracks a different curvature than planned.
     double outerRatio = 1.0 + fabs(kappa) * (trackWidthMm / 2.0);
     curveCap = fmin(curveCap, maxWheelVelMmS / outerRatio);
 
@@ -363,12 +472,16 @@ double targetVelocity(double kappa, double distLeft, double prevVel, double dt) 
 void turnToFace(const Point& target) {
     int settled = 0;
     int elapsedMs = 0;
+    const double dt = controlLoopMs / 1000.0;
+    double prevError = headingErrorToTarget(target, getPose());
 
     while (elapsedMs < maxTurnMs) {
         Pose robot = getPose();
         double error = headingErrorToTarget(target, robot);
+        double dError = (error - prevError) / dt;
+        prevError = error;
 
-        if (debugTelemetry) {
+        if (debugTelemetry && (elapsedMs % 50 == 0)) {
             printf("turn hdg:%.1f err:%.1f\n",
                    robot.theta * 180.0 / M_PI, error * 180.0 / M_PI);
             fflush(stdout);
@@ -382,8 +495,13 @@ void turnToFace(const Point& target) {
             settled = 0;
         }
 
-        double power = error * turnToFaceKp;
-        if (fabs(power) < minTurnPct) power = (power > 0.0) ? minTurnPct : -minTurnPct;
+        // PD: voltage control has no internal velocity loop to slow the
+        // turn, so the D term provides the damping.
+        double power = error * turnToFaceKp + dError * turnToFaceKd;
+        // Only enforce the minimum outside tolerance, otherwise it chatters
+        // back and forth while trying to settle.
+        if (fabs(error) >= startTurnToleranceRad && fabs(power) < minTurnPct)
+            power = (error > 0.0) ? minTurnPct : -minTurnPct;
 
         setDrive(-power, power);
         this_thread::sleep_for((int)controlLoopMs);
@@ -397,6 +515,7 @@ void followPath() {
     progress     = PathProgress();
     haveLastLook = false;
     robotSegment = 0;
+    resetDriveFeedforward();
 
     turnToFace(path[1]);
 
@@ -429,8 +548,13 @@ void followPath() {
         if (robotSegment == pathLength - 2 &&
             projectOnSegment(robot, robotSegment) >= 1.0) break;
 
+        // Speed-scaled lookahead. NOT limited by distance to the end: the
+        // last segment is extended past the end point, so even the minimum
+        // lookahead always has a point ahead to aim at (no spinning).
+        double lookahead = lookaheadFor(vel);
+
         double distLeft;
-        if (findLookaheadPoint(robot, lookaheadMm, look)) {
+        if (findLookaheadPoint(robot, lookahead, look)) {
             kappa    = curvatureTo(robot, look);
             distLeft = distanceToPathEnd(robot);
             target   = look;
@@ -470,12 +594,12 @@ void followPath() {
 
         if (debugTelemetry && (debugCounter++ % debugPrintLoopInterval == 0)) {
             double targetHeading = atan2(target.y - robot.y, target.x - robot.x);
-            printf("seg:%d robot:(%.1f, %.1f) hdg:%.1f target:(%.1f, %.1f) tHead:%.1f k:%.4f v:%.0f\n",
+            printf("seg:%d r:(%.0f,%.0f) h:%.1f t:(%.0f,%.0f) th:%.1f k:%.4f v:%.0f L:%.0f\n",
                    progress.segment, robot.x, robot.y,
                    robot.theta * 180.0 / M_PI,
                    target.x, target.y,
                    targetHeading * 180.0 / M_PI,
-                   kappa, vel);
+                   kappa, vel, lookahead);
             fflush(stdout);
         }
 
@@ -483,4 +607,13 @@ void followPath() {
     }
 
     stopDrive();
+
+    if (debugTelemetry) {
+        this_thread::sleep_for(300);   // let it settle so the final pose is real
+        Pose fin = getPose();
+        double ex = fin.x - endPt.x, ey = fin.y - endPt.y;
+        printf("END r:(%.1f,%.1f) h:%.1f  err x:%.1f y:%.1f dist:%.1f\n",
+               fin.x, fin.y, fin.theta * 180.0 / M_PI, ex, ey, sqrt(ex*ex + ey*ey));
+        fflush(stdout);
+    }
 }
