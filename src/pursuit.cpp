@@ -10,15 +10,6 @@
 using namespace vex;
 
 Pose pose;
-Point path[] = {
-    {-1862.6, -12.8},  {-1812.9, -8.0},   {-1762.9, -5.5},   {-1712.9, -5.5},   {-1663.0, -8.2},
-    {-1613.4, -13.9},  {-1564.2, -23.0},  {-1515.9, -35.7},  {-1468.8, -52.5},  {-1423.6, -73.8},
-    {-1380.8, -99.7},  {-1341.4, -130.4}, {-1306.2, -165.8}, {-1275.8, -205.4}, {-1250.5, -248.5},
-    {-1230.4, -294.2}, {-1215.4, -341.9}, {-1205.0, -390.8}, {-1199.0, -440.4}, {-1196.6, -490.3},
-    {-1197.5, -540.3}, {-1200.6, -586.0}
-};
-extern const int pathLength = sizeof(path) / sizeof(path[0]);
-
 int targetIndex = 0;
 
 static double prevOdomDeg = 0.0;
@@ -34,7 +25,7 @@ Pose getPose() {
 }
 
 Point getTarget() {
-    return path[targetIndex];
+    return path1[targetIndex];
 }
 
 bool reachedTarget(const Point& target, const Pose& pose) {
@@ -57,25 +48,28 @@ double headingErrorToTarget(const Point& target, const Pose& pose) {
 
 
 
+// Field heading (rad, CCW +).
 static double inertialThetaRad() {
-    return -inertialSensor.rotation(rotationUnits::deg) * M_PI / 180.0;
+    return startHeadingRad
+         - inertialSensor.rotation(rotationUnits::deg) * gyroScale * M_PI / 180.0;
 }
 
 void initOdom() {
+    inertialSensor.calibrate();
+    Brain.Screen.print("Calibrating Inertial Sensor...");
+    while (inertialSensor.isCalibrating()) {
+        this_thread::sleep_for(10);
+    }
+
+    // Zero after calibration so bumps during it aren't counted as travel.
     odomPod.resetPosition();
     this_thread::sleep_for(50);
     prevOdomDeg = odomPod.position(rotationUnits::deg);
 
-    inertialSensor.calibrate();
-    while (inertialSensor.isCalibrating()) {
-        this_thread::sleep_for(10);
-        Brain.Screen.print("Calibrating Inertial Sensor...");
-    }
-
     poseMutex.lock();
-    pose.x     = path[0].x;
-    pose.y     = path[0].y;
-    pose.theta = normalizeAngle(startHeadingRad + inertialThetaRad());
+    pose.x     = path1[0].x;
+    pose.y     = path1[0].y;
+    pose.theta = inertialThetaRad();
     poseMutex.unlock();
 
     if (debugTelemetry) {
@@ -107,9 +101,24 @@ void updateOdom() {
     }
 }
 
-// Raw voltage output. Bypasses the motors' internal velocity PID, which is
-// what added the ~150-250 ms of lag. If either side exceeds the limit both
-// are scaled together so the left/right ratio (i.e. curvature) is preserved.
+// Call instead of followPath(), move the robot by hand and read the brain screen.
+void odomCalibrationMode() {
+    while (true) {
+        double mm  = odomPod.position(rotationUnits::deg) / 360.0 * wheelCircumferenceMm;
+        double deg = inertialSensor.rotation(rotationUnits::deg);
+        Pose p = getPose();
+        Brain.Screen.clearScreen();
+        Brain.Screen.setCursor(1, 1);
+        Brain.Screen.print("wheel mm: %.1f", mm);
+        Brain.Screen.setCursor(2, 1);
+        Brain.Screen.print("imu deg:  %.2f", deg);
+        Brain.Screen.setCursor(3, 1);
+        Brain.Screen.print("pose x:%.0f y:%.0f h:%.1f", p.x, p.y, p.theta * 180.0 / M_PI);
+        this_thread::sleep_for(100);
+    }
+}
+
+// Both sides scale together past the limit so curvature is preserved.
 void setDriveVolts(double leftVolts, double rightVolts) {
     double peak = fmax(fabs(leftVolts), fabs(rightVolts));
     if (peak > maxDriveVolts) {
@@ -127,7 +136,6 @@ void setDriveVolts(double leftVolts, double rightVolts) {
     backRightDrive.spin(directionType::fwd,  rightVolts, voltageUnits::volt);
 }
 
-// Percent-of-voltage wrapper (100% = maxDriveVolts).
 void setDrive(double left, double right) {
     double peak = fmax(fabs(left), fabs(right));
     if (peak > maxPowerPct) {
@@ -147,54 +155,55 @@ void driveToTarget(const Pose& robot, const Point& target) {
     setDrive(forwardPowerPct - turnPower, forwardPowerPct + turnPower);
 }
 
-void stopDrive() {
-    // Voltage mode has no velocity loop holding the robot back, so actively
-    // brake instead of coasting past the target.
-    frontLeftDrive.stop(brakeType::brake);
-    midLeftDrive.stop(brakeType::brake);
-    backLeftDrive.stop(brakeType::brake);
-    frontRightDrive.stop(brakeType::brake);
-    midRightDrive.stop(brakeType::brake);
-    backRightDrive.stop(brakeType::brake);
+void setDriveBrake(brakeType mode) {
+    frontLeftDrive.stop(mode);
+    midLeftDrive.stop(mode);
+    backLeftDrive.stop(mode);
+    frontRightDrive.stop(mode);
+    midRightDrive.stop(mode);
+    backRightDrive.stop(mode);
 }
 
-// Speed-scaled lookahead: short when slow (strong correction), long when
-// fast (stable). Deliberately NOT shortened near the end of the path.
+void stopDrive() {
+    setDriveBrake(brakeType::brake);
+}
+
 double lookaheadFor(double velMmS) {
     return fmin(fmax(velMmS * lookaheadTimeS, minLookaheadMm), lookaheadMm);
 }
+
+static const Point* activePath = path1;
+static int          activeLen  = path1Length;
+static PathOpts     activeOpts;
 
 static PathProgress progress;
 static Point lastLook;
 static bool  haveLastLook = false;
 
-// Fraction along segment i of the robot's perpendicular projection (unclamped).
+// Unclamped fraction along segment i of the robot's projection.
 static double projectOnSegment(const Pose& robot, int i) {
-    double dx = path[i + 1].x - path[i].x;
-    double dy = path[i + 1].y - path[i].y;
+    double dx = activePath[i + 1].x - activePath[i].x;
+    double dy = activePath[i + 1].y - activePath[i].y;
     double lenSq = dx*dx + dy*dy;
     if (lenSq < 1e-9) return 1.0;
-    return ((robot.x - path[i].x) * dx + (robot.y - path[i].y) * dy) / lenSq;
+    return ((robot.x - activePath[i].x) * dx + (robot.y - activePath[i].y) * dy) / lenSq;
 }
 
 static double segmentLength(int i) {
-    double dx = path[i + 1].x - path[i].x;
-    double dy = path[i + 1].y - path[i].y;
+    double dx = activePath[i + 1].x - activePath[i].x;
+    double dy = activePath[i + 1].y - activePath[i].y;
     return sqrt(dx*dx + dy*dy);
 }
 
 // Picks the furthest-along intersection of the lookahead circle with the path
-// that is not behind the previous one. If none exists (odom jitter, robot off
-// the path) the previous lookahead point is reused instead of jumping to some
-// other target, which is what made the steering flip back and forth.
 bool findLookaheadPoint(const Pose& robot, double radius, Point& out) {
     bool found = false;
     PathProgress best = progress;
     Point bestPt = {0, 0};
 
-    for (int i = progress.segment; i < pathLength - 1; i++) {
-        Point E = path[i]; //start of segment
-        Point L = path[i + 1]; //end of segment
+    for (int i = progress.segment; i < activeLen - 1; i++) {
+        Point E = activePath[i]; //start of segment
+        Point L = activePath[i + 1]; //end of segment
 
         double dx = L.x - E.x,       dy = L.y - E.y; //Segment direction vector
         double fx = E.x - robot.x,   fy = E.y - robot.y; //Vector from robot to segment start
@@ -213,20 +222,17 @@ bool findLookaheadPoint(const Pose& robot, double radius, Point& out) {
         double t1 = (-b - disc) / (2.0*a); //entry point (behind)
         double t2 = (-b + disc) / (2.0*a); //exit point, preferred (ahead)
 
-        // The last segment is extended past the end point for STEERING only,
-        // so the robot drives straight into the end instead of spiraling.
-        // followPath() stops once the robot crosses the end line.
-        double tMax = (i == pathLength - 2) ? 1e9 : 1.0;
+        // The last segment is extended past the end point for STEERING only
+        double tMax = (i == activeLen - 2) ? 1e9 : 1.0;
         double t = -1.0;
         if      (t2 >= 0.0 && t2 <= tMax) t = t2;
         else if (t1 >= 0.0 && t1 <= tMax) t = t1;
         if (t < 0.0) continue;
 
-        // Never move backwards along the segment; hold the previous point
-        // instead of rejecting it (rejecting caused the target to flicker).
+        // Never move backwards along the segment
         if (i == progress.segment && t < progress.t) t = progress.t;
 
-        // Keep looping: later segments are further along the path.
+        // Keep looping when later segments are further along the path.
         found = true;
         best.segment = i;
         best.t       = t;
@@ -259,7 +265,7 @@ double curvatureTo(const Pose& robot, const Point& look) {
     return 2.0 * localY / lenSq;
 }
 
-// Measured wheel surface speed (mm/s) of one drive side, from motor encoders.
+// Measured wheel surface speed (mm/s) of one side.
 static double sideVelocityMmS(motor& a, motor& b, motor& c) {
     double rpm = (a.velocity(velocityUnits::rpm) +
                   b.velocity(velocityUnits::rpm) +
@@ -267,7 +273,6 @@ static double sideVelocityMmS(motor& a, motor& b, motor& c) {
     return rpm * wheelPerMotor / 60.0 * M_PI * driveWheelMm;
 }
 
-// volts = kS*sign(v) + kV*v + kA*a + kP*(v - measured)
 static double wheelVolts(double targetVel, double targetAccel, double measuredVel) {
     double volts = driveKv * targetVel
                  + driveKa * targetAccel
@@ -279,11 +284,10 @@ static double wheelVolts(double targetVel, double targetAccel, double measuredVe
 static double prevLeftTargetMmS  = 0.0;
 static double prevRightTargetMmS = 0.0;
 
-// Recent headings, used to measure the actual turn rate.
 static double headingHist[yawRateWindow + 1];
 static int    headingHistCount = 0;
 static int    headingHistIdx   = 0;
-static double yawErrIntegral   = 0.0;   // rad: commanded heading change - actual
+static double yawErrIntegral   = 0.0;
 
 static void resetDriveFeedforward() {
     prevLeftTargetMmS  = 0.0;
@@ -293,8 +297,7 @@ static void resetDriveFeedforward() {
     yawErrIntegral     = 0.0;
 }
 
-// Measured yaw rate (rad/s, CCW +) from the gyro heading over the last
-// yawRateWindow loops. Returns false until enough samples exist.
+// Yaw rate (rad/s, CCW +) over the last yawRateWindow loops; false until filled.
 static bool measuredYawRate(double& out) {
     double theta = getPose().theta;
     headingHist[headingHistIdx] = theta;
@@ -310,11 +313,15 @@ static bool measuredYawRate(double& out) {
 }
 
 void driveWithCurvature(double v, double kappa) {
-    double offset = v * kappa * curvatureGain * (trackWidthMm / 2.0);
+    driveWithYawRate(v, v * kappa);
+}
+
+// v: mm/s (negative = reverse). omega: rad/s, CCW +.
+void driveWithYawRate(double v, double omega) {
+    double offset = omega * curvatureGain * (trackWidthMm / 2.0);
     double leftTarget  = v - offset;
     double rightTarget = v + offset;
 
-    // Per-wheel acceleration of the commanded profile, for the kA term.
     const double dt = controlLoopMs / 1000.0;
     double leftAccel  = (leftTarget  - prevLeftTargetMmS)  / dt;
     double rightAccel = (rightTarget - prevRightTargetMmS) / dt;
@@ -329,16 +336,11 @@ void driveWithCurvature(double v, double kappa) {
     double leftV  = wheelVolts(leftTarget,  leftAccel,  leftMeas);
     double rightV = wheelVolts(rightTarget, rightAccel, rightMeas);
 
-    // Gyro yaw-rate correction: if the robot is turning slower than commanded
-    // (positive error = needs more CCW/left turn), speed up the right side and
-    // slow the left.
-    // P handles fast lag, I removes a constant pull (e.g. one side has more
-    // friction), which P alone only partly cancels.
+    // Gyro yaw-rate PI: positive error = needs more CCW turn.
     double yawMeas;
     if (measuredYawRate(yawMeas)) {
-        double yawErr = v * kappa - yawMeas;   // rad/s
-        yawErrIntegral += yawErr * dt;
-        // Anti-windup: I term alone may never exceed the clamp.
+        double yawErr = omega - yawMeas;
+        yawErrIntegral = yawErrIntegral * fmax(0.0, 1.0 - dt / yawRateILeakS) + yawErr * dt;
         if (yawRateKi > 0.0) {
             double iMax = yawRateMaxVolts / yawRateKi;
             yawErrIntegral = fmin(fmax(yawErrIntegral, -iMax), iMax);
@@ -352,46 +354,158 @@ void driveWithCurvature(double v, double kappa) {
     setDriveVolts(leftV, rightV);
 }
 
-// Distance left along the path, measured straight to the end of the current
-// segment (NOT from the lookahead point). Using the true distance to the
-// segment end instead of a clamped projection keeps the value honest when
-// the robot has drifted off the path - a clamped projection reports 0
-// remaining while the robot is still far away, which makes the deceleration
-// planner stop short of tolerance.
-static int robotSegment = 0;
+// flags
+
+static PathFlag flags[maxFlags];
+static double   flagPathMm[maxFlags];   // trigger distance along the path
+static double   flagStopMm[maxFlags];   // stop distance along the path
+static Point    flagSnap[maxFlags];     // flag point snapped onto the path
+static bool     flagFired[maxFlags];
+static bool     flagStopDone[maxFlags];
+static int      flagCount = 0;
+
+static void pushFlag(const PathFlag& f) {
+    if (flagCount >= maxFlags || f.action == nullptr) {
+        if (debugTelemetry) {
+            printf("addFlag ignored (full or null action)\n");
+            fflush(stdout);
+        }
+        return;
+    }
+    flags[flagCount++] = f;
+}
+
+void addFlag(const Point& at, FlagAction action, double leadMm) {
+    pushFlag({at, action, leadMm, false, 0});
+}
+
+void addStopFlag(const Point& at, FlagAction action, int waitMs, double leadMm) {
+    pushFlag({at, action, leadMm, true, waitMs});
+}
+
+void clearFlags() {
+    flagCount = 0;
+}
+
+// Distance along the path of the path point closest to p.
+static double pathDistanceOf(const Point& p, Point* snapped = nullptr) {
+    double bestDistSq = 1e18;
+    double bestS = 0.0;
+    double s = 0.0;
+    for (int i = 0; i < activeLen - 1; i++) {
+        double len = segmentLength(i);
+        double t = 0.0;
+        if (len > 1e-9) {
+            t = ((p.x - activePath[i].x) * (activePath[i + 1].x - activePath[i].x) +
+                 (p.y - activePath[i].y) * (activePath[i + 1].y - activePath[i].y)) / (len * len);
+            t = fmin(fmax(t, 0.0), 1.0);
+        }
+        double px = activePath[i].x + t * (activePath[i + 1].x - activePath[i].x) - p.x;
+        double py = activePath[i].y + t * (activePath[i + 1].y - activePath[i].y) - p.y;
+        double dSq = px*px + py*py;
+        if (dSq < bestDistSq) {
+            bestDistSq = dSq;
+            bestS = s + t * len;
+            if (snapped) *snapped = {px + p.x, py + p.y};
+        }
+        s += len;
+    }
+    return bestS;
+}
+
+static double robotPathDistance(const Pose& robot, int seg) {
+    double s = 0.0;
+    for (int i = 0; i < seg; i++) s += segmentLength(i);
+    double t = fmin(fmax(projectOnSegment(robot, seg), 0.0), 1.0);
+    return s + t * segmentLength(seg);
+}
+
+static void resetFlags() {
+    for (int i = 0; i < flagCount; i++) {
+        flagStopMm[i]   = pathDistanceOf(flags[i].at, &flagSnap[i]);
+        flagPathMm[i]   = flagStopMm[i] - flags[i].leadMm;
+        flagFired[i]    = false;
+        flagStopDone[i] = !flags[i].stop;
+    }
+}
+
+static uint32_t flagFiredAtMs[maxFlags];
+
+static void fireFlag(int i, const Pose& robot) {
+    flagFired[i] = true;
+    flagFiredAtMs[i] = timer::system();
+    if (debugTelemetry) {
+        printf("flag %d fired at r:(%.0f,%.0f) for (%.0f,%.0f)\n",
+               i, robot.x, robot.y, flags[i].at.x, flags[i].at.y);
+        fflush(stdout);
+    }
+    flags[i].action();
+}
+
+// Next unserviced stop flag (closest along the path), or -1.
+static int nextStopFlag() {
+    int best = -1;
+    for (int i = 0; i < flagCount; i++) {
+        if (flagStopDone[i]) continue;
+        if (best < 0 || flagStopMm[i] < flagStopMm[best]) best = i;
+    }
+    return best;
+}
+
+static void serviceStopFlag(int i) {
+    setDriveBrake(brakeType::hold);
+    if (!flagFired[i]) fireFlag(i, getPose());
+
+    while ((int)(timer::system() - flagFiredAtMs[i]) < flags[i].waitMs) {
+        this_thread::sleep_for(5);
+    }
+    flagStopDone[i] = true;
+
+    if (debugTelemetry) {
+        printf("stop flag %d done after %lu ms\n",
+               i, (unsigned long)(timer::system() - flagFiredAtMs[i]));
+        fflush(stdout);
+    }
+}
+
+static void checkFlags(const Pose& robot, double& progressMm, int seg) {
+    progressMm = fmax(progressMm, robotPathDistance(robot, seg));
+    for (int i = 0; i < flagCount; i++) {
+        if (!flagFired[i] && progressMm >= flagPathMm[i]) fireFlag(i, robot);
+    }
+}
+
+static int robotSegment = 0;   // segment the robot is physically on
 
 double distanceToPathEnd(const Pose& robot) {
     int seg = robotSegment;
     double total;
-    if (seg == pathLength - 2) {
-        // On the last segment measure along it, so the decel profile ends at
-        // the end line (where followPath stops) even with some lateral error.
+    if (seg == activeLen - 2) {
+        // Measured along the last segment so decel ends at the end line.
         total = segmentLength(seg) * (1.0 - projectOnSegment(robot, seg));
     } else {
-        Point B = path[seg + 1];
+        Point B = activePath[seg + 1];
         double dx = B.x - robot.x;
         double dy = B.y - robot.y;
         total = sqrt(dx*dx + dy*dy);
     }
 
-    for (int i = seg + 1; i < pathLength - 1; i++) {
+    for (int i = seg + 1; i < activeLen - 1; i++) {
         total += segmentLength(i);
     }
     return total;
 }
 
-// Advance the segment the robot is physically on (not where the lookahead is).
 static double distToSegment(const Pose& robot, int i) {
     double t = fmin(fmax(projectOnSegment(robot, i), 0.0), 1.0);
-    double px = path[i].x + t * (path[i + 1].x - path[i].x) - robot.x;
-    double py = path[i].y + t * (path[i + 1].y - path[i].y) - robot.y;
+    double px = activePath[i].x + t * (activePath[i + 1].x - activePath[i].x) - robot.x;
+    double py = activePath[i].y + t * (activePath[i + 1].y - activePath[i].y) - robot.y;
     return sqrt(px*px + py*py);
 }
 
-// Pure pursuit cuts corners, so the robot may never project past the end of
-// a segment. Also advance once it is closer to the next segment.
+// Advances when past the segment end OR closer to the next one (pursuit cuts corners).
 static void updateRobotSegment(const Pose& robot) {
-    while (robotSegment < pathLength - 2) {
+    while (robotSegment < activeLen - 2) {
         int n = robotSegment + 1;
         bool past   = projectOnSegment(robot, robotSegment) >= 1.0;
         bool closer = projectOnSegment(robot, n) > 0.0 &&
@@ -401,135 +515,320 @@ static void updateRobotSegment(const Pose& robot) {
     }
 }
 
-// Speed limit from upcoming corners. Pure pursuit only sees a corner once the
-// lookahead wraps it, which is too late to brake from full speed, so the
-// robot used to overshoot and then S-curve back. Instead, estimate the arc
-// pure pursuit will cut through each corner and start braking early enough
-// to reach that speed.
+// Speed cap so the robot brakes early enough for the arc pursuit cuts through upcoming corners.
 double cornerSpeedCap(const Pose& robot) {
-    double cap = maxVelMmS;
+    const double vMax = activeOpts.maxVel_;
+    const double aMax = activeOpts.maxAccel_;
+    double cap = vMax;
 
     double t = fmin(fmax(projectOnSegment(robot, robotSegment), 0.0), 1.0);
     double distToCorner = segmentLength(robotSegment) * (1.0 - t);
 
-    for (int j = robotSegment + 1; j < pathLength - 1; j++) {
-        double ax = path[j].x - path[j - 1].x, ay = path[j].y - path[j - 1].y;
-        double bx = path[j + 1].x - path[j].x, by = path[j + 1].y - path[j].y;
+    for (int j = robotSegment + 1; j < activeLen - 1; j++) {
+        double ax = activePath[j].x - activePath[j - 1].x, ay = activePath[j].y - activePath[j - 1].y;
+        double bx = activePath[j + 1].x - activePath[j].x, by = activePath[j + 1].y - activePath[j].y;
         double turn = fabs(normalizeAngle(atan2(by, bx) - atan2(ay, ax)));
         turn = fmin(turn, cornerMaxAngleRad);
 
-        // The arc cut through the corner depends on the lookahead, which now
-        // depends on speed. Iterate a few times to find a consistent speed.
+        // Arc depends on lookahead, which depends on speed: iterate to converge.
         double tanHalf = tan(turn / 2.0);
-        double vCorner = maxVelMmS;
+        double vCorner = vMax;
         if (tanHalf > 1e-6) {
             for (int iter = 0; iter < 3; iter++) {
                 double kCorner = 2.0 * tanHalf / lookaheadFor(vCorner);
                 double vc = sqrt(maxLatAccelMmS2 / kCorner);
                 vc = fmin(vc, maxWheelVelMmS / (1.0 + kCorner * trackWidthMm / 2.0));
-                vCorner = fmin(vc, maxVelMmS);
+                vCorner = fmin(vc, vMax);
             }
         }
-        vCorner = fmax(vCorner, minVelocityMmS);
+        vCorner = fmax(vCorner, fmin(minVelocityMmS, vMax));
 
-        cap = fmin(cap, sqrt(vCorner*vCorner + 2.0 * maxAccelMmS2 * distToCorner));
+        cap = fmin(cap, sqrt(vCorner*vCorner + 2.0 * aMax * distToCorner));
         distToCorner += segmentLength(j);
     }
     return cap;
 }
 
 double targetVelocity(double kappa, double distLeft, double prevVel, double dt) {
-    double v = maxVelMmS;
+    const double vMax = activeOpts.maxVel_;
+    const double aMax = activeOpts.maxAccel_;
+    double v = vMax;
 
-    double curveCap = maxVelMmS;
+    double curveCap = vMax;
     if (fabs(kappa) > 1e-6)
         curveCap = sqrt(maxLatAccelMmS2 / fabs(kappa));
 
-    // The outer wheel runs at v * (1 + |kappa| * trackWidth/2). If that
-    // exceeds what the motors can do, setDriveVolts scales both sides down
-    // and the robot silently tracks a different curvature than planned.
+    // Keep the outer wheel within motor limits, or setDriveVolts scaling changes the curvature.
     double outerRatio = 1.0 + fabs(kappa) * (trackWidthMm / 2.0);
     curveCap = fmin(curveCap, maxWheelVelMmS / outerRatio);
 
     v = fmin(v, curveCap);
 
-    double decelCap = sqrt(2.0 * maxAccelMmS2 * fmax(distLeft, 0.0));
+    double decelCap = sqrt(2.0 * aMax * fmax(distLeft, 0.0));
     v = fmin(v, decelCap);
 
-    v = fmin(v, prevVel + maxAccelMmS2 * dt);
+    v = fmin(v, prevVel + aMax * dt);
 
-    // Don't let the accel ramp linger at a speed too low to actually move
-    // the robot. Cap the floor at BOTH decelCap and curveCap so this never
-    // overrides slowing down for a tight corner or stopping cleanly at the
-    // end - it only helps the "haven't ramped up from a stop yet" case.
+    // Min-speed floor for the initial ramp; never overrides corner/stop caps.
     if (v > 0.0 && v < minVelocityMmS) {
-        v = fmin(minVelocityMmS, fmin(curveCap, decelCap));
+        v = fmin(fmin(minVelocityMmS, vMax), fmin(curveCap, decelCap));
     }
 
     return fmax(v, 0.0);
 }
 
-void turnToFace(const Point& target) {
+// Motion-profiled turn: commands a decelerating turn rate closed-loop on the gyro.
+// errorOf(pose) returns the remaining heading error (rad, CCW +).
+template <typename ErrorFn>
+static void profiledTurn(ErrorFn errorOf, double toleranceRad) {
     int settled = 0;
     int elapsedMs = 0;
     const double dt = controlLoopMs / 1000.0;
-    double prevError = headingErrorToTarget(target, getPose());
+    const double wheelPerRad = turnScrubFactor * trackWidthMm / 2.0;   // rad/s -> wheel mm/s
+
+    double cmdOmega = 0.0;
+    double rateI    = 0.0;
+    double measRate = 0.0;
+    double prevTheta = getPose().theta;
+    double prevError = errorOf(getPose());
 
     while (elapsedMs < maxTurnMs) {
         Pose robot = getPose();
-        double error = headingErrorToTarget(target, robot);
-        double dError = (error - prevError) / dt;
+        double error = errorOf(robot);
+
+        double rawRate = normalizeAngle(robot.theta - prevTheta) / dt;
+        prevTheta = robot.theta;
+        measRate += 0.4 * (rawRate - measRate);
+
+        // Overshot: restart the profile in the other direction.
+        if (prevError * error < 0.0) {
+            cmdOmega = 0.0;
+            rateI    = 0.0;
+        }
         prevError = error;
 
-        if (debugTelemetry && (elapsedMs % 50 == 0)) {
-            printf("turn hdg:%.1f err:%.1f\n",
-                   robot.theta * 180.0 / M_PI, error * 180.0 / M_PI);
-            fflush(stdout);
-        }
-
-        // Require the error to stay inside tolerance for a few loops so we
-        // don't accept a reading taken while coasting through the target.
-        if (fabs(error) < startTurnToleranceRad) {
+        bool inTol = fabs(error) < toleranceRad;
+        if (inTol) {
             if (++settled >= startTurnSettleLoops) break;
         } else {
             settled = 0;
         }
 
-        // PD: voltage control has no internal velocity loop to slow the
-        // turn, so the D term provides the damping.
-        double power = error * turnToFaceKp + dError * turnToFaceKd;
-        // Only enforce the minimum outside tolerance, otherwise it chatters
-        // back and forth while trying to settle.
-        if (fabs(error) >= startTurnToleranceRad && fabs(power) < minTurnPct)
-            power = (error > 0.0) ? minTurnPct : -minTurnPct;
+        double prevCmd = cmdOmega;
+        if (inTol) {
+            cmdOmega = 0.0;
+        } else {
+            // Fastest rate that can still stop at the goal, accel-limited, with a min floor.
+            double remaining = fmax(fabs(error) - copysign(1.0, error) * measRate * turnLagCompS, 0.0);
+            double mag = fmin(turnMaxOmegaRadS, sqrt(2.0 * turnDecelRadS2 * remaining));
+            mag = fmin(mag, fabs(prevCmd) + turnAccelRadS2 * dt);
+            mag = fmax(mag, turnMinOmegaRadS);
+            cmdOmega = copysign(mag, error);
+        }
+        double cmdAccel = fmin(fmax((cmdOmega - prevCmd) / dt, -turnAccelRadS2), turnAccelRadS2);
 
-        setDrive(-power, power);
+        double volts = 0.0;
+        if (!inTol) {
+            double rateErr = cmdOmega - measRate;
+            rateI += rateErr * dt;
+            double iMax = turnRateIMaxVolts / turnRateKi;
+            rateI = fmin(fmax(rateI, -iMax), iMax);
+
+            volts = copysign(turnKs, cmdOmega)
+                  + driveKv * cmdOmega * wheelPerRad
+                  + driveKa * cmdAccel * wheelPerRad
+                  + turnRateKp * rateErr
+                  + turnRateKi * rateI;
+        }
+
+        if (debugTelemetry && (elapsedMs % 50 == 0)) {
+            printf("turn hdg:%.1f err:%.1f w:%.0f meas:%.0f V:%.1f\n",
+                   robot.theta * 180.0 / M_PI, error * 180.0 / M_PI,
+                   cmdOmega * 180.0 / M_PI, measRate * 180.0 / M_PI, volts);
+            fflush(stdout);
+        }
+
+        if (inTol) setDriveBrake(brakeType::hold);
+        else       setDriveVolts(-volts, volts);
+
         this_thread::sleep_for((int)controlLoopMs);
         elapsedMs += (int)controlLoopMs;
     }
     stopDrive();
-    this_thread::sleep_for(100);
+
+    if (debugTelemetry && elapsedMs >= maxTurnMs) {
+        printf("turn timeout, err:%.1f\n", errorOf(getPose()) * 180.0 / M_PI);
+        fflush(stdout);
+    }
+    this_thread::sleep_for(50);
 }
 
-void followPath() {
+void turnToFace(const Point& target, double toleranceRad) {
+    profiledTurn([&](const Pose& p) { return headingErrorToTarget(target, p); },
+                 toleranceRad);
+}
+
+void turnToHeading(double headingDeg, double toleranceRad) {
+    const double goalRad = normalizeAngle(headingDeg * M_PI / 180.0);
+    profiledTurn([goalRad](const Pose& p) { return normalizeAngle(goalRad - p.theta); },
+                 toleranceRad);
+}
+
+// run timer
+
+static uint32_t runTimerStartMs   = 0;
+static uint32_t runTimerExcludeMs = 0;   // debug-only END settle pauses
+
+void startRunTimer() {
+    if (!timeRuns) return;
+    runTimerStartMs   = timer::system();
+    runTimerExcludeMs = 0;
+    printf("RUN TIMER started\n");
+    fflush(stdout);
+}
+
+double endRunTimer() {
+    if (!timeRuns) return 0.0;
+    uint32_t total = timer::system() - runTimerStartMs;
+    double secs = (total - runTimerExcludeMs) / 1000.0;
+    if (runTimerExcludeMs > 0) {
+        printf("RUN TIME: %.2f s (%.2f s wall, %.2f s of debug settle excluded)\n",
+               secs, total / 1000.0, runTimerExcludeMs / 1000.0);
+    } else {
+        printf("RUN TIME: %.2f s\n", secs);
+    }
+    fflush(stdout);
+    Brain.Screen.clearScreen();
+    Brain.Screen.setCursor(1, 1);
+    Brain.Screen.print("Run time: %.2f s", secs);
+    return secs;
+}
+
+void driveDistance(double distMm, double maxVel) {
+    resetDriveFeedforward();
+
+    const Pose   start   = getPose();
+    const double holdHdg = start.theta;
+    const double dir     = (distMm >= 0.0) ? 1.0 : -1.0;
+    const double goal    = fabs(distMm);
+    const double cosH    = cos(holdHdg), sinH = sin(holdHdg);
+    const double dt      = controlLoopMs / 1000.0;
+    maxVel = fmin(fabs(maxVel), maxVelMmS);
+
+    double vel = 0.0;
+    int elapsedMs = 0;
+    Pose stallRef = start;
+    double stallTimerMs = 0.0;
+
+    while (elapsedMs < driveDistTimeoutMs) {
+        Pose robot = getPose();
+
+        // Measured along the start heading so sideways drift isn't progress.
+        double travelled = dir * ((robot.x - start.x) * cosH + (robot.y - start.y) * sinH);
+        double remaining = goal - travelled;
+        if (remaining < driveDistToleranceMm) break;
+
+        double moveX = robot.x - stallRef.x, moveY = robot.y - stallRef.y;
+        if (sqrt(moveX*moveX + moveY*moveY) > stallMinMoveMm) {
+            stallRef = robot;
+            stallTimerMs = 0.0;
+        } else if ((stallTimerMs += controlLoopMs) >= stallCheckMs) {
+            if (debugTelemetry) {
+                printf("driveDistance stall, remaining:%.1f\n", remaining);
+                fflush(stdout);
+            }
+            break;
+        }
+
+        double decelCap = sqrt(2.0 * maxAccelMmS2 * remaining);
+        vel = fmin(fmin(maxVel, decelCap), vel + maxAccelMmS2 * dt);
+        if (vel < minVelocityMmS) vel = fmin(minVelocityMmS, decelCap);
+
+        double hdgErr = normalizeAngle(holdHdg - robot.theta);
+        double omega  = fmin(fmax(hdgErr * driveDistHeadingKp, -maxHoldYawRate), maxHoldYawRate);
+
+        driveWithYawRate(dir * vel, omega);
+
+        if (debugTelemetry && (elapsedMs % 100 == 0)) {
+            printf("drive rem:%.0f v:%.0f hdgErr:%.2f\n",
+                   remaining, dir * vel, hdgErr * 180.0 / M_PI);
+            fflush(stdout);
+        }
+
+        this_thread::sleep_for((int)controlLoopMs);
+        elapsedMs += (int)controlLoopMs;
+    }
+    stopDrive();
+}
+
+void followPath(int pathNumber, const PathOpts& opts) {
+    if (pathNumber < 1 || pathNumber > pathCount) {
+        if (debugTelemetry) {
+            printf("followPath(%d): no such path (have 1-%d)\n", pathNumber, pathCount);
+            fflush(stdout);
+        }
+        return;
+    }
+    const PathRef& p = paths[pathNumber - 1];
+    followPath(p.pts, p.len, opts);
+}
+
+// Heading pursuit steers with: the back of the robot when reversing.
+static Pose steerPose(const Pose& robot) {
+    Pose s = robot;
+    if (activeOpts.reverse_) s.theta = normalizeAngle(robot.theta + M_PI);
+    return s;
+}
+
+void followPath(const Point* pts, int len, const PathOpts& opts) {
+    if (pts == nullptr || len < 2) return;
+    activePath = pts;
+    activeLen  = len;
+    activeOpts = opts;
+    activeOpts.maxVel_   = fmin(fmax(opts.maxVel_, 1.0), maxVelMmS);
+    activeOpts.maxAccel_ = fmax(opts.maxAccel_, 1.0);
+
     progress     = PathProgress();
     haveLastLook = false;
     robotSegment = 0;
     resetDriveFeedforward();
+    resetFlags();
+    double flagProgressMm = 0.0;
+    bool   stalled = false;
 
-    turnToFace(path[1]);
+    // Flags at the very start fire before the robot moves.
+    checkFlags(getPose(), flagProgressMm, 0);
+    for (int s = nextStopFlag(); s >= 0 && flagStopMm[s] - flagProgressMm < stopFlagToleranceMm;
+         s = nextStopFlag()) {
+        serviceStopFlag(s);
+    }
+
+    // Start turn aims at the first lookahead point (not path[1]) so it agrees with pursuit.
+    uint32_t pathStartMs = timer::system();
+    if (activeOpts.startTurn_) {
+        Point aim;
+        if (!findLookaheadPoint(getPose(), lookaheadFor(0.0), aim)) aim = activePath[activeLen - 1];
+        progress     = PathProgress();
+        haveLastLook = false;
+        auto aimErr = [&](const Pose& p) { return headingErrorToTarget(aim, steerPose(p)); };
+        if (fabs(aimErr(getPose())) > startTurnSkipRad) {
+            profiledTurn(aimErr, pathStartTurnToleranceRad);
+        }
+    }
+    uint32_t turnDoneMs = timer::system();
 
     double vel = 0.0;
     const double dt = controlLoopMs / 1000.0;
     int debugCounter = 0;
 
-    const Point endPt = path[pathLength - 1];
+    const Point endPt = activePath[activeLen - 1];
 
     Pose stallRef = getPose();
     double stallTimerMs = 0.0;
 
     while (true) {
         Pose   robot = getPose();
+        Pose   steer = steerPose(robot);
         Point  look;
         Point  target = endPt;
         double kappa;
@@ -538,40 +837,50 @@ void followPath() {
         double dyEnd = endPt.y - robot.y;
         double distToEnd = sqrt(dxEnd*dxEnd + dyEnd*dyEnd);
 
-        if (distToEnd < endToleranceMm) break;
+        if (distToEnd < activeOpts.endTol_) break;
 
         updateRobotSegment(robot);
+        checkFlags(robot, flagProgressMm, robotSegment);
 
-        // Stop once the robot crosses the line through the end point
-        // perpendicular to the last segment. The lookahead is extended past
-        // the end, so without this the robot would keep driving.
-        if (robotSegment == pathLength - 2 &&
+        int    stopIdx  = nextStopFlag();
+        double distStop = 1e9;
+        if (stopIdx >= 0) {
+            double sx = flagSnap[stopIdx].x - robot.x;
+            double sy = flagSnap[stopIdx].y - robot.y;
+            distStop = flagStopMm[stopIdx] - flagProgressMm;
+            // Also accept being physically close (progress lags when cutting corners).
+            if (distStop < stopFlagToleranceMm ||
+                (distStop < lookaheadMm && sqrt(sx*sx + sy*sy) < stopFlagToleranceMm)) {
+                serviceStopFlag(stopIdx);
+                vel = 0.0;
+                resetDriveFeedforward();
+                stallRef = getPose();
+                stallTimerMs = 0.0;
+                continue;
+            }
+        }
+
+        // Stop once the robot crosses the line through the end point.
+        if (robotSegment == activeLen - 2 &&
             projectOnSegment(robot, robotSegment) >= 1.0) break;
 
-        // Speed-scaled lookahead. NOT limited by distance to the end: the
-        // last segment is extended past the end point, so even the minimum
-        // lookahead always has a point ahead to aim at (no spinning).
         double lookahead = lookaheadFor(vel);
 
         double distLeft;
         if (findLookaheadPoint(robot, lookahead, look)) {
-            kappa    = curvatureTo(robot, look);
+            kappa    = curvatureTo(steer, look);
             distLeft = distanceToPathEnd(robot);
             target   = look;
         } else {
             distLeft = distToEnd;
-            kappa    = curvatureTo(robot, endPt);
+            kappa    = curvatureTo(steer, endPt);
         }
 
-        // Never plan to arrive anywhere farther than the end point itself.
         distLeft = fmin(distLeft, distToEnd);
-        // Brake early for upcoming corners (expressed as an equivalent distLeft
-        // so targetVelocity's decel cap enforces it).
+        distLeft = fmin(distLeft, fmax(distStop, 0.0));
         double cornerCap = cornerSpeedCap(robot);
-        distLeft = fmin(distLeft, cornerCap * cornerCap / (2.0 * maxAccelMmS2));
+        distLeft = fmin(distLeft, cornerCap * cornerCap / (2.0 * activeOpts.maxAccel_));
 
-        // Stall guard: if we are commanding motion but not moving, something
-        // is blocking us (wall, pinned robot). Stop rather than burn motors.
         double movedX = robot.x - stallRef.x;
         double movedY = robot.y - stallRef.y;
         if (sqrt(movedX*movedX + movedY*movedY) > stallMinMoveMm) {
@@ -585,12 +894,15 @@ void followPath() {
                            robot.x, robot.y, distLeft);
                     fflush(stdout);
                 }
+                stalled = true;
                 break;
             }
         }
 
         vel = targetVelocity(kappa, distLeft, vel, dt);
-        driveWithCurvature(vel, kappa);
+        // Reversing: wheels go backward but the yaw rate keeps its sign (v * kappa).
+        if (activeOpts.reverse_) driveWithYawRate(-vel, vel * kappa);
+        else                     driveWithCurvature(vel, kappa);
 
         if (debugTelemetry && (debugCounter++ % debugPrintLoopInterval == 0)) {
             double targetHeading = atan2(target.y - robot.y, target.x - robot.x);
@@ -599,7 +911,7 @@ void followPath() {
                    robot.theta * 180.0 / M_PI,
                    target.x, target.y,
                    targetHeading * 180.0 / M_PI,
-                   kappa, vel, lookahead);
+                   kappa, activeOpts.reverse_ ? -vel : vel, lookahead);
             fflush(stdout);
         }
 
@@ -608,12 +920,36 @@ void followPath() {
 
     stopDrive();
 
+    // Finished inside the end tolerance: fire anything still pending.
+    if (!stalled) {
+        Pose fin = getPose();
+        for (int i = 0; i < flagCount; i++) {
+            if (!flagFired[i] && !flags[i].stop) fireFlag(i, fin);
+        }
+        for (int s = nextStopFlag(); s >= 0; s = nextStopFlag()) serviceStopFlag(s);
+        stopDrive();
+    }
+
+    clearFlags();
+
+    if (timeRuns) {
+        uint32_t doneMs = timer::system();
+        printf("PATH TIME: %.2f s (turn %.2f s, drive %.2f s)\n",
+               (doneMs - pathStartMs) / 1000.0,
+               (turnDoneMs - pathStartMs) / 1000.0,
+               (doneMs - turnDoneMs) / 1000.0);
+        fflush(stdout);
+    }
+
     if (debugTelemetry) {
-        this_thread::sleep_for(300);   // let it settle so the final pose is real
+        runTimerExcludeMs += 300;
+        this_thread::sleep_for(300);   // settle so the final pose is real
         Pose fin = getPose();
         double ex = fin.x - endPt.x, ey = fin.y - endPt.y;
         printf("END r:(%.1f,%.1f) h:%.1f  err x:%.1f y:%.1f dist:%.1f\n",
                fin.x, fin.y, fin.theta * 180.0 / M_PI, ex, ey, sqrt(ex*ex + ey*ey));
         fflush(stdout);
     }
+
+    activeOpts = PathOpts();
 }
