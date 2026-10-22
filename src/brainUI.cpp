@@ -1,4 +1,3 @@
-#include "motorDefs.h"
 #include "brainUI.h"
 
 int motorStatusTimer = 0;
