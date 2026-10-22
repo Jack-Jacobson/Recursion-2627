@@ -19,3 +19,4 @@ vex::inertial inertialSensor(vex::PORT19);
 vex::distance liftSensor(vex::PORT11);
 
 vex::digital_out claw = vex::digital_out(Brain.ThreeWirePort.A);
+vex::digital_out roller = vex::digital_out(Brain.ThreeWirePort.B);

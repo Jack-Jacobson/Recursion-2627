@@ -86,7 +86,7 @@ constexpr double yawRateILeakS   = 0.25;
 
 // Stop if less than stallMinMoveMm of travel over stallCheckMs.
 constexpr double stallMinMoveMm = 10.0;
-constexpr double stallCheckMs   = 400.0;
+constexpr double stallCheckMs   = 200.0;
 
 // Field heading at start (rad, 0 = +x, CCW +)
 constexpr double startHeadingRad = 0;

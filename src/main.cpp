@@ -45,36 +45,47 @@ using namespace vex;
 
 
 
-
-
 int main() {
 
   vex::thread UIThread(brainUI);
   claw.set(true);
   initOdom();
   vex::thread odomThread(updateOdom);
-  startLift();  
+  startLift();   
 
  startRunTimer();
- liftTo(150);
- followPath(1);
- followPath(2);
- liftTo(35);
+ roller.set(true);
+ wait(0.3, sec);
+ setLiftTarget(110);
+ followPath (1);
+ setLiftTarget(45);
+ wait(0.3, sec);
  claw.set(false);
- wait(0.5, sec);
- driveDistance(-500);
+ driveDistance(-300);
  setLiftTarget(0);
- followPath(3);
- driveDistance(80);
+ followPath(2);
+ claw.set(true);
+ wait(0.2, sec);
+ setLiftTarget(205);
+ followPath(3, PathOpts().endTol(60));
+ claw.set(false);
+ wait(0.2, sec);
+ driveDistance(-300);
+ setLiftTarget(0);
+ followPath(4, PathOpts().endTol(60));
  claw.set(true);
  wait(0.3, sec);
- driveDistance(-120);
- setLiftTarget(400);
- followPath(4);
- liftTo(200);
+ setLiftTarget(390);
+ driveDistance(-500);
+ followPath(5);
  claw.set(false);
- wait(0.3 , sec);
- driveDistance(-300);
- //followPath(5);
+ driveDistance(-100);
+ setLiftTarget(0);
+ followPath(6, PathOpts().reverse());
+ followPath(7, PathOpts().noStartTurn());
+ claw.set(true);
+ setLiftTarget(440);
+ followPath(8, PathOpts().noStartTurn().reverse());
+ followPath(9);
  endRunTimer();
 }
