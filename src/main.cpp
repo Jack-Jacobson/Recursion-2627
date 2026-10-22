@@ -39,6 +39,7 @@
 #include "motorDefs.h"
 #include "pursuit.h"
 #include "lift.h"
+#include "brainUI.h"
 
 using namespace vex;
 
@@ -48,6 +49,7 @@ using namespace vex;
 
 int main() {
 
+  vex::thread UIThread(brainUI);
   claw.set(true);
   initOdom();
   vex::thread odomThread(updateOdom);
