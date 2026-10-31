@@ -7,14 +7,19 @@ static volatile double liftHeightMm  = 0.0;
 static volatile int    liftSettled   = 0;
 static double          liftZeroMm    = 0.0;
 static bool            liftStarted   = false;
+static volatile bool   liftEnabled   = true;
+static volatile bool   liftHoming    = false; // true = encoder home move owns the motors
+
+static double liftHomeDeg[3] = {0.0, 0.0, 0.0};
+static bool   liftHomeSet    = false;
 
 static double medianBuf[liftMedianSize];
 static int    medianIdx = 0;
 
 static void spinLift(double volts) {
-    lift1.spin(directionType::fwd, volts, voltageUnits::volt);
-    lift2.spin(directionType::fwd, volts, voltageUnits::volt);
-    lift3.spin(directionType::fwd, volts, voltageUnits::volt);
+    lift1.spin(directionType::rev, volts, voltageUnits::volt);
+    lift2.spin(directionType::rev, volts, voltageUnits::volt);
+    lift3.spin(directionType::rev, volts, voltageUnits::volt);
 }
 
 static void holdLift() {
@@ -89,7 +94,10 @@ static int liftTask() {
                          (fabs(error) < liftHoldExitMm && predError * error <= 0.0)))
             holding = true;
 
-        if (holding) {
+        if (!liftEnabled || liftHoming) {
+            integral = 0.0;
+            holding  = true;
+        } else if (holding) {
             integral = 0.0;
             holdLift();
         } else {
@@ -133,7 +141,10 @@ void startLift() {
 void setLiftTarget(double mm) {
     liftTargetMm = fmin(fmax(mm, 0.0), liftMaxHeightMm);
     liftSettled  = 0;
+    liftHoming   = false; // hand the motors back to the PID
 }
+
+void setLiftControl(bool enabled) { liftEnabled = enabled; }
 
 double getLiftTarget() { return liftTargetMm; }
 double getLiftHeight() { return liftHeightMm; }
@@ -149,4 +160,36 @@ void liftTo(double mm, int timeoutMs) {
     while (!liftAtTarget() && (int)(timer::system() - start) < timeoutMs) {
         this_thread::sleep_for(liftLoopMs);
     }
+}
+
+void recordLiftHome() {
+    liftHomeDeg[0] = lift1.position(rotationUnits::deg);
+    liftHomeDeg[1] = lift2.position(rotationUnits::deg);
+    liftHomeDeg[2] = lift3.position(rotationUnits::deg);
+    liftHomeSet    = true;
+}
+
+void liftToHome(bool wait, int timeoutMs) {
+    if (!liftHomeSet) return;
+
+    // Take the motors away from the PID thread and let any in-flight loop finish
+    liftHoming = true;
+    this_thread::sleep_for(liftLoopMs * 2);
+
+    lift1.setStopping(brakeType::hold);
+    lift2.setStopping(brakeType::hold);
+    lift3.setStopping(brakeType::hold);
+
+    lift1.spinToPosition(liftHomeDeg[0], rotationUnits::deg, liftHomeVelocityPct, velocityUnits::pct, false);
+    lift2.spinToPosition(liftHomeDeg[1], rotationUnits::deg, liftHomeVelocityPct, velocityUnits::pct, false);
+    lift3.spinToPosition(liftHomeDeg[2], rotationUnits::deg, liftHomeVelocityPct, velocityUnits::pct, false);
+
+    if (!wait) return;
+
+    uint32_t start = timer::system();
+    while (!(lift1.isDone() && lift2.isDone() && lift3.isDone()) &&
+           (int)(timer::system() - start) < timeoutMs) {
+        this_thread::sleep_for(liftLoopMs);
+    }
+    holdLift();
 }

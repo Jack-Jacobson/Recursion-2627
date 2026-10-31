@@ -325,8 +325,10 @@ void driveWithYawRate(double v, double omega) {
     const double dt = controlLoopMs / 1000.0;
     double leftAccel  = (leftTarget  - prevLeftTargetMmS)  / dt;
     double rightAccel = (rightTarget - prevRightTargetMmS) / dt;
-    leftAccel  = fmin(fmax(leftAccel,  -maxFeedforwardAccelMmS2), maxFeedforwardAccelMmS2);
-    rightAccel = fmin(fmax(rightAccel, -maxFeedforwardAccelMmS2), maxFeedforwardAccelMmS2);
+    // Scale with the path's accel so faster profiles still get full feedforward.
+    const double ffAccelMax = fmax(maxFeedforwardAccelMmS2, 2.0 * activeOpts.maxAccel_);
+    leftAccel  = fmin(fmax(leftAccel,  -ffAccelMax), ffAccelMax);
+    rightAccel = fmin(fmax(rightAccel, -ffAccelMax), ffAccelMax);
     prevLeftTargetMmS  = leftTarget;
     prevRightTargetMmS = rightTarget;
 
@@ -536,7 +538,7 @@ double cornerSpeedCap(const Pose& robot) {
         if (tanHalf > 1e-6) {
             for (int iter = 0; iter < 3; iter++) {
                 double kCorner = 2.0 * tanHalf / lookaheadFor(vCorner);
-                double vc = sqrt(maxLatAccelMmS2 / kCorner);
+                double vc = sqrt(activeOpts.maxLatAccel_ / kCorner);
                 vc = fmin(vc, maxWheelVelMmS / (1.0 + kCorner * trackWidthMm / 2.0));
                 vCorner = fmin(vc, vMax);
             }
@@ -556,7 +558,7 @@ double targetVelocity(double kappa, double distLeft, double prevVel, double dt) 
 
     double curveCap = vMax;
     if (fabs(kappa) > 1e-6)
-        curveCap = sqrt(maxLatAccelMmS2 / fabs(kappa));
+        curveCap = sqrt(activeOpts.maxLatAccel_ / fabs(kappa));
 
     // Keep the outer wheel within motor limits, or setDriveVolts scaling changes the curvature.
     double outerRatio = 1.0 + fabs(kappa) * (trackWidthMm / 2.0);
@@ -704,7 +706,7 @@ double endRunTimer() {
     return secs;
 }
 
-void driveDistance(double distMm, double maxVel) {
+void driveDistance(double distMm, double maxVel, double stallMs) {
     resetDriveFeedforward();
 
     const Pose   start   = getPose();
@@ -732,7 +734,7 @@ void driveDistance(double distMm, double maxVel) {
         if (sqrt(moveX*moveX + moveY*moveY) > stallMinMoveMm) {
             stallRef = robot;
             stallTimerMs = 0.0;
-        } else if ((stallTimerMs += controlLoopMs) >= stallCheckMs) {
+        } else if ((stallTimerMs += controlLoopMs) >= stallMs) {
             if (debugTelemetry) {
                 printf("driveDistance stall, remaining:%.1f\n", remaining);
                 fflush(stdout);
@@ -785,8 +787,10 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
     activePath = pts;
     activeLen  = len;
     activeOpts = opts;
-    activeOpts.maxVel_   = fmin(fmax(opts.maxVel_, 1.0), maxVelMmS);
-    activeOpts.maxAccel_ = fmax(opts.maxAccel_, 1.0);
+    activeOpts.maxVel_      = fmin(fmax(opts.maxVel_, 1.0), maxPathVelMmS);
+    activeOpts.maxAccel_    = fmax(opts.maxAccel_, 1.0);
+    activeOpts.maxLatAccel_ = fmax(opts.maxLatAccel_, 1.0);
+    activeOpts.stallMs_     = fmax(opts.stallMs_, controlLoopMs);
 
     progress     = PathProgress();
     haveLastLook = false;
@@ -888,7 +892,7 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
             stallTimerMs = 0.0;
         } else {
             stallTimerMs += controlLoopMs;
-            if (stallTimerMs >= stallCheckMs) {
+            if (stallTimerMs >= activeOpts.stallMs_) {
                 if (debugTelemetry) {
                     printf("stall detected at (%.1f, %.1f) distLeft:%.1f\n",
                            robot.x, robot.y, distLeft);

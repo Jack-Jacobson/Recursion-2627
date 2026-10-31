@@ -1,22 +1,23 @@
 #include "vex.h"
 #include "motorDefs.h"
+#include <string>
 
-extern int motorStatusTimer = 0;
-extern bool frontLeftStatus = frontLeftDrive.installed();
-extern bool midLeftStatus = midLeftDrive.installed();
-extern bool backLeftStatus = backLeftDrive.installed();
-extern bool frontRightStatus = frontRightDrive.installed();
-extern bool midRightStatus = midRightDrive.installed();
-extern bool backRightStatus = backRightDrive.installed();
-extern bool lift1Status = lift1.installed();
-extern bool lift2Status = lift2.installed();
-extern bool lift3Status = lift3.installed();
-extern bool odomStatus = odomPod.installed();
-extern bool intertialStatus = inertialSensor.installed();
-extern bool liftStatus = liftSensor.installed();
-extern bool calibrated = false;
+extern int motorStatusTimer;
+extern bool frontLeftStatus;
+extern bool midLeftStatus;
+extern bool backLeftStatus;
+extern bool frontRightStatus;
+extern bool midRightStatus;
+extern bool backRightStatus;
+extern bool lift1Status;
+extern bool lift2Status;
+extern bool lift3Status;
+extern bool odomStatus;
+extern bool inertialStatus;
+extern bool liftStatus;
+extern bool calibrated;
 
 void drawButton(int x, int y, int w, int h, std::string t, int destination);
-void drawAutonButton(int x, int y, int w, int h, std::string t, int autonNum, color textColor = white);
+void drawAutonButton(int x, int y, int w, int h, std::string t, int autonNum, vex::color textColor = vex::white);
 
 void brainUI(void);

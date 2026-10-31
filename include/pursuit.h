@@ -48,7 +48,11 @@ constexpr double maxLatAccelMmS2   = 2500.0;  // lower = less wheel slip
 constexpr double endToleranceMm    = 20.0;
 constexpr double cornerMaxAngleRad = 2.6;     // corner angle clamp for speed planning (~150 deg)
 
+// Hard ceiling for PathOpts().maxVel(); leaves headroom for steering and the velocity P term.
+constexpr double maxPathVelMmS     = 0.95 * maxWheelVelMmS;   // ~1560 mm/s
+
 static_assert(maxVelMmS < maxWheelVelMmS, "maxVelMmS exceeds what the drivetrain can reach; decel planning will overshoot");
+static_assert(maxPathVelMmS < maxWheelVelMmS, "maxPathVelMmS exceeds what the drivetrain can reach");
 
 constexpr double startTurnToleranceRad = 0.02;  // ~1.1 deg
 constexpr int    startTurnSettleLoops  = 5;
@@ -86,7 +90,7 @@ constexpr double yawRateILeakS   = 0.25;
 
 // Stop if less than stallMinMoveMm of travel over stallCheckMs.
 constexpr double stallMinMoveMm = 10.0;
-constexpr double stallCheckMs   = 200.0;
+constexpr double stallCheckMs   = 220.0;
 
 // Field heading at start (rad, 0 = +x, CCW +)
 constexpr double startHeadingRad = 0;
@@ -173,7 +177,7 @@ void driveWithCurvature(double v, double kappa);
 void driveWithYawRate(double v, double omega);
 
 // Holds heading, negative distance backs up.
-void driveDistance(double distMm, double maxVel = driveDistDefaultVel);
+void driveDistance(double distMm, double maxVel = driveDistDefaultVel, double stallMs = stallCheckMs);
 
 void turnToFace(const Point& target, double toleranceRad = startTurnToleranceRad);
 
@@ -185,14 +189,18 @@ double endRunTimer();
 
 // Per-path settings
 struct PathOpts {
-    double maxVel_    = maxVelMmS;       // capped at maxVelMmS
-    double endTol_    = endToleranceMm;
-    double maxAccel_  = maxAccelMmS2;
-    bool   reverse_   = false;           // drive the path backwards (back of robot leads)
-    bool   startTurn_ = true;
+    double maxVel_      = maxVelMmS;       // capped at maxPathVelMmS
+    double endTol_      = endToleranceMm;
+    double maxAccel_    = maxAccelMmS2;
+    double maxLatAccel_ = maxLatAccelMmS2; // corner speed limit, higher = faster corners but more slip
+    double stallMs_     = stallCheckMs;    // end the path if barely moving for this long
+    bool   reverse_     = false;           // drive the path backwards (back of robot leads)
+    bool   startTurn_   = true;
     PathOpts& maxVel(double v)       { maxVel_ = v;    return *this; }
     PathOpts& endTol(double mm)      { endTol_ = mm;   return *this; }
     PathOpts& maxAccel(double a)     { maxAccel_ = a;  return *this; }
+    PathOpts& maxLatAccel(double a)  { maxLatAccel_ = a; return *this; }
+    PathOpts& stallMs(double ms)     { stallMs_ = ms;  return *this; }
     PathOpts& reverse(bool r = true) { reverse_ = r;   return *this; }
     PathOpts& noStartTurn()          { startTurn_ = false; return *this; }
 };
