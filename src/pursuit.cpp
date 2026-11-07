@@ -1,10 +1,3 @@
-/*----------------------------------------------------------------------------*/
-/*                                                                            */
-/*    Module:       pursuit.cpp                                               */
-/*    Author:       jackj                                                     */
-/*    Description:  Odometry + waypoint pursuit helpers                       */
-/*                                                                            */
-/*----------------------------------------------------------------------------*/
 #include "pursuit.h"
 
 using namespace vex;
