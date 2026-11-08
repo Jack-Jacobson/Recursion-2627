@@ -27,6 +27,14 @@ void setDrive() {
  if (abs(forward) < 5) forward = 0;
  if (abs(sideways) < 5) sideways = 0;
 
+
+ frontLeftDrive.setStopping(brakeType::coast);
+ midLeftDrive.setStopping(brakeType::coast);
+ backLeftDrive.setStopping(brakeType::coast);
+ frontRightDrive.setStopping(brakeType::coast);
+ midRightDrive.setStopping(brakeType::coast);
+ backRightDrive.setStopping(brakeType::coast);
+
  int leftVelocity = 0.12 * (forward + sideways);
  int rightVelocity = 0.12 * (forward - sideways);
 
@@ -35,8 +43,8 @@ void setDrive() {
   backLeftDrive.spin(directionType::fwd,   leftVelocity,  voltageUnits::volt);
 
   frontRightDrive.spin(directionType::fwd, rightVelocity, voltageUnits::volt);
-  midRightDrive.spin(directionType::fwd,   rightVelocity, voltageUnits::volt);
-  backRightDrive.spin(directionType::fwd,  rightVelocity, voltageUnits::volt);
+  midRightDrive.spin(directionType::fwd,   rightVelocity,  voltageUnits::volt);
+  backRightDrive.spin(directionType::fwd,  rightVelocity,  voltageUnits::volt);
 
 }
 // Hold L2: raise while held and clear coast lockout.
