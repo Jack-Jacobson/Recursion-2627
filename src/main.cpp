@@ -109,8 +109,12 @@ void scorePin(void)
   setLiftTarget(-20);
 }
 
+static volatile bool autoHasRun = false;
+static volatile bool driverAutoDone = false;
+
 void autonomous(void)
 {
+  autoHasRun = true;
   /**
   // 1 = Non-Loader: same routine mirrored onto the other side.
   setPathMirror(currentAuton == 1);
@@ -135,10 +139,10 @@ void autonomous(void)
   setLiftTarget(128);
   followPath(1, PathOpts().noStartTurn().maxAccel(2600).stallLastPts(6).stallMs(50));
   setLiftTarget(0);
-  wait(0.2, sec);
+  wait(0.25, sec);
   claw.set(false);
   driveDistance(-300, 3000, 220, 2600);
-  setLiftTarget(125);
+  setLiftTarget(139);
   followPath(2, PathOpts().startTurnTol(5).startTurnAccel(30).grabAt(110).grabLift(200).endVel(500).grabLift(300));
   addFlag(path3[path3Length / 2], []() { setLiftTarget(190); });
   followPath(3, PathOpts().noStartTurn());
@@ -146,14 +150,15 @@ void autonomous(void)
   wait(0.2, sec);
   claw.set(false);
   followPath(4, PathOpts().reverse().maxAccel(6000).stallLastPts(6).stallMs(50));
-  followPath(5, PathOpts().endVel(600).grabAt(110).grabLift(270).noStartTurn());
+  followPath(5, PathOpts().endVel(600).grabAt(120).grabLift(270).noStartTurn());
   claw.set(true);
+  setLiftTarget(270);
   followPath(6, PathOpts().noStartTurn().endVel(600));
   liftTo(0, 400);
   claw.set(false);
   driveDistance(-300, 4000, 220, 3500);
   setLiftTarget(0);
-  followPath(7, PathOpts().endVel(600).grabAt(135).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(400));
+  followPath(7, PathOpts().endVel(600).grabAt(155).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(400));
   claw.set(true);
   setLiftTarget(270);
   followPath(8, PathOpts().maxAccel(2600));
@@ -166,7 +171,10 @@ constexpr double driverPeriodSec = 105.0;
 
 // Auto claw trigger distance (mm) while R1 is held.
 double autoClawMm = 45.0;
+constexpr double autoClawHeadwayS = 0.06;
+constexpr double autoClawMaxMm = 130.0;
 extern bool clawed;
+
 
 struct RumbleCue
 {
@@ -175,28 +183,54 @@ struct RumbleCue
   bool done;
 };
 
-void usercontrol(void)
+static int driverAutoTask()
 {
+  autonomous();
+  driverAutoDone = true;
+  return 0;
+}
+void usercontrol(void) {
   roller.set(true);
-  setLiftControl(false);
 
   RumbleCue cues[] = {
-      {60.0, "-", false},
-      {30.0, "- -", false},
-      {10.0, "-.-", false},
+    {60.0, "-",     false},
+    {30.0, "- -",   false},
+    {10.0, "-.-", false},
+    
   };
   vex::timer driverTimer;
 
-  while (1)
-  {
+  // Run the auto at the start of driver control unless it already ran in the
+  // autonomous period. X cancels it and hands control to the driver.
+  vex::thread *autoThread = nullptr;
+  if (!autoHasRun) {
+    autoThread = new vex::thread(driverAutoTask);
+  } else {
+    setLiftControl(false);
+  }
+
+  while (1) {
+    if (autoThread != nullptr) {
+      if (Controller.ButtonX.pressing() || driverAutoDone) {
+        if (!driverAutoDone) {
+          autoThread->interrupt();
+          clearFlags();
+          stopDrive();
+        }
+        setLiftControl(false);
+        autoThread = nullptr;
+      } else {
+        wait(20, msec);
+        continue;
+      }
+    }
+
     setDrive();
     moveCascade();
 
     double secLeft = driverPeriodSec - driverTimer.time(sec);
-    for (RumbleCue &c : cues)
-    {
-      if (!c.done && secLeft <= c.secLeft)
-      {
+    for (RumbleCue& c : cues) {
+      if (!c.done && secLeft <= c.secLeft) {
         Controller.rumble(c.pattern);
         c.done = true;
       }
@@ -204,44 +238,63 @@ void usercontrol(void)
 
     static bool prevR2 = false;
     bool curR2 = Controller.ButtonR2.pressing();
-    if (curR2 && !prevR2)
-    {
+    if(curR2 && !prevR2) {
       toggleClaw();
     }
     prevR2 = curR2;
 
-    if (Controller.ButtonR1.pressing() && !clawed && clawDist.installed())
-    {
+    if (Controller.ButtonR1.pressing() && !clawed && clawDist.installed()) {
+      double dynamicClawMm = fmin(autoClawMaxMm, autoClawMm + getOdomSpeedMmS() * autoClawHeadwayS);
       double objMm = clawDist.objectDistance(mm);
-      if (objMm > 0.0 && objMm <= autoClawMm)
-      {
+      if (objMm > 0.0 && objMm <= dynamicClawMm) {
         clawed = true;
         claw.set(true);
       }
     }
 
-    wait(20, msec);
+    static bool prevRight = false;
+    bool curRight = Controller.ButtonRight.pressing();
+    if (curRight && !prevRight) {
+      setLiftControl(true);
+      setLiftTarget(138);
+    }
+    prevRight = curRight;
+
+    static bool prevY = false;
+    bool curY = Controller.ButtonY.pressing();
+    if (curY && !prevY && !clawed && clawDist.installed()) {
+      double dynamicClawMm = fmin(autoClawMaxMm, autoClawMm + getOdomSpeedMmS() * autoClawHeadwayS);
+      double objMm = clawDist.objectDistance(mm);
+      if (objMm > 0.0 && objMm <= dynamicClawMm) {
+        clawed = true;
+        claw.set(true);
+        setLiftControl(true);
+        setLiftTarget(30);
+      }
+    }
+    prevY = curY;
+
+    wait(20, msec); 
+  
 
     static bool prevB = false;
     bool curB = Controller.ButtonB.pressing();
-    if (curB && !prevB)
-    {
+    if (curB && !prevB){
       rightToggle();
     }
     prevB = curB;
 
     static bool prevDown = false;
     bool curDown = Controller.ButtonDown.pressing();
-    if (curDown && !prevDown)
-    {
+    if (curDown && !prevDown){
       leftToggle();
     }
     prevDown = curDown;
+
   }
 
   wait(20, msec);
 }
-
 //
 // Main will set up the competition functions and callbacks.
 //

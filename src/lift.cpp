@@ -145,6 +145,7 @@ void setLiftTarget(double mm) {
 }
 
 void setLiftControl(bool enabled) { liftEnabled = enabled; }
+bool liftControlEnabled() { return liftEnabled; }
 
 double getLiftTarget() { return liftTargetMm; }
 double getLiftHeight() { return liftHeightMm; }

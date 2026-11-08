@@ -19,6 +19,8 @@ static vex::mutex poseMutex;
 
 static bool   mirrorPaths      = false;
 static double headingOffsetRad = startHeadingRad;
+static volatile double odomSpeedMmS = 0.0;
+
 
 void setPathMirror(bool on) { mirrorPaths = on; }
 bool pathMirrored() { return mirrorPaths; }
@@ -104,11 +106,23 @@ void initOdom() {
 }
 
 void updateOdom() {
+    uint32_t lastMs = timer::system();
+    
     while (true) {
+        uint32_t now = timer::system();
+        double dt = (now - lastMs) / 1000.0;
+        lastMs = now;
+
         double currOdomDeg = odomPod.position(rotationUnits::deg);
         double deltaDeg    = currOdomDeg - prevOdomDeg;
         double deltaMm     = (deltaDeg / 360.0) * wheelCircumferenceMm;
         prevOdomDeg        = currOdomDeg;
+        
+        if (dt > 0.0) {
+            // Light EMA smooths wheel quantization noise while staying responsive.
+            double instSpeed = fabs(deltaMm) / dt;
+            odomSpeedMmS += 0.25 * (instSpeed - odomSpeedMmS);
+        }
 
         poseMutex.lock();
         // Read inside the lock so a resetPoseToStart() can't be undone by a stale heading.
@@ -1017,4 +1031,8 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
     }
 
     activeOpts = PathOpts();
+}
+
+double getOdomSpeedMmS() {
+    return odomSpeedMmS;
 }

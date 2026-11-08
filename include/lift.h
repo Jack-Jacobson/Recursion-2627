@@ -41,6 +41,7 @@ void setLiftTarget(double mm);
 
 // false = lift thread stops commanding the motors (driver control drives them directly)
 void setLiftControl(bool enabled);
+bool liftControlEnabled();
 
 // Blocking until settled or timeout
 void liftTo(double mm, int timeoutMs = 1200);

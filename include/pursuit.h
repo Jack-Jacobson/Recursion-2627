@@ -185,6 +185,8 @@ double distanceToPathEnd(const Pose& robot);
 
 double targetVelocity(double kappa, double distLeft, double prevVel, double dt);
 
+double getOdomSpeedMmS();
+
 void driveWithCurvature(double v, double kappa);
 
 void driveWithYawRate(double v, double omega);
