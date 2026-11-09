@@ -1,5 +1,6 @@
 
 #include "drive.h"
+#include "lift.h"
 
 
 using namespace vex;
@@ -26,6 +27,14 @@ void setDrive() {
  if (abs(forward) < 5) forward = 0;
  if (abs(sideways) < 5) sideways = 0;
 
+
+ frontLeftDrive.setStopping(brakeType::coast);
+ midLeftDrive.setStopping(brakeType::coast);
+ backLeftDrive.setStopping(brakeType::coast);
+ frontRightDrive.setStopping(brakeType::coast);
+ midRightDrive.setStopping(brakeType::coast);
+ backRightDrive.setStopping(brakeType::coast);
+
  int leftVelocity = 0.12 * (forward + sideways);
  int rightVelocity = 0.12 * (forward - sideways);
 
@@ -34,37 +43,73 @@ void setDrive() {
   backLeftDrive.spin(directionType::fwd,   leftVelocity,  voltageUnits::volt);
 
   frontRightDrive.spin(directionType::fwd, rightVelocity, voltageUnits::volt);
-  midRightDrive.spin(directionType::fwd,   rightVelocity, voltageUnits::volt);
-  backRightDrive.spin(directionType::fwd,  rightVelocity, voltageUnits::volt);
+  midRightDrive.spin(directionType::fwd,   rightVelocity,  voltageUnits::volt);
+  backRightDrive.spin(directionType::fwd,  rightVelocity,  voltageUnits::volt);
 
 }
-
-// Hold L2 = up, hold L1 = down, neither = coast so it sinks under gravity
+// Hold L2: raise while held and clear coast lockout.
+// L1: force coast mode immediately; while held, drive down.
 void moveCascade(){
-  if (Controller.ButtonL2.pressing()) {
-    liftHight = cascadeUpVolts;
-  } else if (Controller.ButtonL1.pressing()) {
-    liftHight = -cascadeDownVolts;
-  } else {
-    liftHight = 0;
-  }
+  static bool coastMode = false;
+  static bool brakeLockedOut = false;
 
-  if (liftHight == 0) {
-    lift1.stop(brakeType::coast);
-    lift2.stop(brakeType::coast);
-    lift3.stop(brakeType::coast);
+  bool upHeld = Controller.ButtonL2.pressing();
+  bool downHeld = Controller.ButtonL1.pressing();
+
+  // Up takes priority if both are pressed.
+  if (upHeld) {
+    setLiftControl(false);
+    coastMode = false;
+    brakeLockedOut = false;
+    lift1.spin(directionType::fwd, -cascadeUpVolts, voltageUnits::volt);
+    lift2.spin(directionType::fwd, -cascadeUpVolts, voltageUnits::volt);
+    lift3.spin(directionType::fwd, -cascadeUpVolts, voltageUnits::volt);
     return;
   }
 
-  lift1.spin(directionType::fwd, liftHight, voltageUnits::volt);
-  lift2.spin(directionType::fwd, liftHight, voltageUnits::volt);
-  lift3.spin(directionType::fwd, liftHight, voltageUnits::volt);
+  if (downHeld) {
+    brakeLockedOut = true;
+    setLiftControl(false);
+    coastMode = true;
+    lift1.setStopping(brakeType::coast);
+    lift2.setStopping(brakeType::coast);
+    lift3.setStopping(brakeType::coast);
+    lift1.spin(directionType::fwd, cascadeDownVolts, voltageUnits::volt);
+    lift2.spin(directionType::fwd, cascadeDownVolts, voltageUnits::volt);
+    lift3.spin(directionType::fwd, cascadeDownVolts, voltageUnits::volt);
+    return;
+  }
+
+  // A lift macro (PID) owns the motors; don't fight it.
+  if (liftControlEnabled()) return;
+
+  if (coastMode || brakeLockedOut) {
+    lift1.stop(brakeType::coast);
+    lift2.stop(brakeType::coast);
+    lift3.stop(brakeType::coast);
+  } else {
+    lift1.stop(brakeType::brake);
+    lift2.stop(brakeType::brake);
+    lift3.stop(brakeType::brake);
+  }
 }
 
-bool clawed = false;
+bool clawed = true;
 void toggleClaw(){
   clawed = !clawed;
   claw.set(clawed);
+}
+
+bool rightToggled = false;
+void rightToggle(){
+  rightToggled = !rightToggled;
+  rightToggler.set(rightToggled);
+}
+
+bool leftToggled = false;
+void leftToggle(){
+  leftToggled = !leftToggled;
+  leftToggler.set(leftToggled);
 }
 
 double clamp (double value, double hiClamp, double loClamp, double deadHi, double deadLo) {

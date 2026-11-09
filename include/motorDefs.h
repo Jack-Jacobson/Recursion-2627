@@ -16,4 +16,7 @@ extern vex::motor lift2;
 extern vex::motor lift3;
 extern vex::digital_out claw;
 extern vex::digital_out roller;
+extern vex::digital_out rightToggler;
+extern vex::digital_out leftToggler;
+extern vex::distance clawDist;
 

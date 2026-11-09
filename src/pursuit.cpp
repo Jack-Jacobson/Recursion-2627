@@ -1,4 +1,12 @@
+/*----------------------------------------------------------------------------*/
+/*                                                                            */
+/*    Module:       pursuit.cpp                                               */
+/*    Author:       jackj                                                     */
+/*    Description:  Odometry + waypoint pursuit helpers                       */
+/*                                                                            */
+/*----------------------------------------------------------------------------*/
 #include "pursuit.h"
+#include "lift.h"
 
 using namespace vex;
 
@@ -8,6 +16,23 @@ int targetIndex = 0;
 static double prevOdomDeg = 0.0;
 
 static vex::mutex poseMutex;
+
+static bool   mirrorPaths      = false;
+static double headingOffsetRad = startHeadingRad;
+static volatile double odomSpeedMmS = 0.0;
+
+
+void setPathMirror(bool on) { mirrorPaths = on; }
+bool pathMirrored() { return mirrorPaths; }
+
+Point mirrorPoint(const Point& p) {
+    return mirrorPaths ? Point{p.y, p.x} : p;
+}
+
+// Reflecting across y = x turns heading t into 90deg - t.
+static double mirrorHeading(double rad) {
+    return mirrorPaths ? normalizeAngle(M_PI / 2.0 - rad) : rad;
+}
 
 
 Pose getPose() {
@@ -43,8 +68,20 @@ double headingErrorToTarget(const Point& target, const Pose& pose) {
 
 // Field heading (rad, CCW +).
 static double inertialThetaRad() {
-    return startHeadingRad
+    return headingOffsetRad
          - inertialSensor.rotation(rotationUnits::deg) * gyroScale * M_PI / 180.0;
+}
+
+void resetPoseToStart() {
+    Point start = mirrorPoint(path1[0]);
+    double heading = mirrorHeading(startHeadingRad);
+    poseMutex.lock();
+    headingOffsetRad = heading
+                     + inertialSensor.rotation(rotationUnits::deg) * gyroScale * M_PI / 180.0;
+    pose.x     = start.x;
+    pose.y     = start.y;
+    pose.theta = inertialThetaRad();
+    poseMutex.unlock();
 }
 
 void initOdom() {
@@ -59,11 +96,7 @@ void initOdom() {
     this_thread::sleep_for(50);
     prevOdomDeg = odomPod.position(rotationUnits::deg);
 
-    poseMutex.lock();
-    pose.x     = path1[0].x;
-    pose.y     = path1[0].y;
-    pose.theta = inertialThetaRad();
-    poseMutex.unlock();
+    resetPoseToStart();
 
     if (debugTelemetry) {
         printf("init pose x:%.1f y:%.1f hdg:%.1f\n",
@@ -73,15 +106,27 @@ void initOdom() {
 }
 
 void updateOdom() {
+    uint32_t lastMs = timer::system();
+    
     while (true) {
+        uint32_t now = timer::system();
+        double dt = (now - lastMs) / 1000.0;
+        lastMs = now;
+
         double currOdomDeg = odomPod.position(rotationUnits::deg);
         double deltaDeg    = currOdomDeg - prevOdomDeg;
         double deltaMm     = (deltaDeg / 360.0) * wheelCircumferenceMm;
         prevOdomDeg        = currOdomDeg;
-
-        double currTheta = inertialThetaRad();
+        
+        if (dt > 0.0) {
+            // Light EMA smooths wheel quantization noise while staying responsive.
+            double instSpeed = fabs(deltaMm) / dt;
+            odomSpeedMmS += 0.25 * (instSpeed - odomSpeedMmS);
+        }
 
         poseMutex.lock();
+        // Read inside the lock so a resetPoseToStart() can't be undone by a stale heading.
+        double currTheta = inertialThetaRad();
         double deltaTheta = currTheta - pose.theta;
 
         double midTheta = pose.theta + deltaTheta * 0.5;
@@ -417,7 +462,7 @@ static double robotPathDistance(const Pose& robot, int seg) {
 
 static void resetFlags() {
     for (int i = 0; i < flagCount; i++) {
-        flagStopMm[i]   = pathDistanceOf(flags[i].at, &flagSnap[i]);
+        flagStopMm[i]   = pathDistanceOf(mirrorPoint(flags[i].at), &flagSnap[i]);
         flagPathMm[i]   = flagStopMm[i] - flags[i].leadMm;
         flagFired[i]    = false;
         flagStopDone[i] = !flags[i].stop;
@@ -559,7 +604,8 @@ double targetVelocity(double kappa, double distLeft, double prevVel, double dt) 
 
     v = fmin(v, curveCap);
 
-    double decelCap = sqrt(2.0 * aMax * fmax(distLeft, 0.0));
+    double endV = activeOpts.endVel_;
+    double decelCap = sqrt(endV * endV + 2.0 * aMax * fmax(distLeft, 0.0));
     v = fmin(v, decelCap);
 
     v = fmin(v, prevVel + aMax * dt);
@@ -575,7 +621,9 @@ double targetVelocity(double kappa, double distLeft, double prevVel, double dt) 
 // Motion-profiled turn: commands a decelerating turn rate closed-loop on the gyro.
 // errorOf(pose) returns the remaining heading error (rad, CCW +).
 template <typename ErrorFn>
-static void profiledTurn(ErrorFn errorOf, double toleranceRad) {
+static void profiledTurn(ErrorFn errorOf, double toleranceRad,
+                         int settleLoops = startTurnSettleLoops, int endPauseMs = 50,
+                         double accelRadS2 = turnAccelRadS2) {
     int settled = 0;
     int elapsedMs = 0;
     const double dt = controlLoopMs / 1000.0;
@@ -604,7 +652,7 @@ static void profiledTurn(ErrorFn errorOf, double toleranceRad) {
 
         bool inTol = fabs(error) < toleranceRad;
         if (inTol) {
-            if (++settled >= startTurnSettleLoops) break;
+            if (++settled >= settleLoops) break;
         } else {
             settled = 0;
         }
@@ -616,11 +664,12 @@ static void profiledTurn(ErrorFn errorOf, double toleranceRad) {
             // Fastest rate that can still stop at the goal, accel-limited, with a min floor.
             double remaining = fmax(fabs(error) - copysign(1.0, error) * measRate * turnLagCompS, 0.0);
             double mag = fmin(turnMaxOmegaRadS, sqrt(2.0 * turnDecelRadS2 * remaining));
-            mag = fmin(mag, fabs(prevCmd) + turnAccelRadS2 * dt);
+            mag = fmin(mag, fabs(prevCmd) + accelRadS2 * dt);
             mag = fmax(mag, turnMinOmegaRadS);
             cmdOmega = copysign(mag, error);
         }
-        double cmdAccel = fmin(fmax((cmdOmega - prevCmd) / dt, -turnAccelRadS2), turnAccelRadS2);
+        double cmdAccel = fmin(fmax((cmdOmega - prevCmd) / dt, -fmax(accelRadS2, turnDecelRadS2)),
+                                fmax(accelRadS2, turnDecelRadS2));
 
         double volts = 0.0;
         if (!inTol) {
@@ -655,16 +704,17 @@ static void profiledTurn(ErrorFn errorOf, double toleranceRad) {
         printf("turn timeout, err:%.1f\n", errorOf(getPose()) * 180.0 / M_PI);
         fflush(stdout);
     }
-    this_thread::sleep_for(50);
+    if (endPauseMs > 0) this_thread::sleep_for(endPauseMs);
 }
 
 void turnToFace(const Point& target, double toleranceRad) {
-    profiledTurn([&](const Pose& p) { return headingErrorToTarget(target, p); },
+    const Point t = mirrorPoint(target);
+    profiledTurn([t](const Pose& p) { return headingErrorToTarget(t, p); },
                  toleranceRad);
 }
 
 void turnToHeading(double headingDeg, double toleranceRad) {
-    const double goalRad = normalizeAngle(headingDeg * M_PI / 180.0);
+    const double goalRad = mirrorHeading(normalizeAngle(headingDeg * M_PI / 180.0));
     profiledTurn([goalRad](const Pose& p) { return normalizeAngle(goalRad - p.theta); },
                  toleranceRad);
 }
@@ -699,8 +749,9 @@ double endRunTimer() {
     return secs;
 }
 
-void driveDistance(double distMm, double maxVel, double stallMs) {
+void driveDistance(double distMm, double maxVel, double stallMs, double maxAccel) {
     resetDriveFeedforward();
+    maxAccel = fmax(maxAccel, 1.0);
 
     const Pose   start   = getPose();
     const double holdHdg = start.theta;
@@ -735,8 +786,8 @@ void driveDistance(double distMm, double maxVel, double stallMs) {
             break;
         }
 
-        double decelCap = sqrt(2.0 * maxAccelMmS2 * remaining);
-        vel = fmin(fmin(maxVel, decelCap), vel + maxAccelMmS2 * dt);
+        double decelCap = sqrt(2.0 * maxAccel * remaining);
+        vel = fmin(fmin(maxVel, decelCap), vel + maxAccel * dt);
         if (vel < minVelocityMmS) vel = fmin(minVelocityMmS, decelCap);
 
         double hdgErr = normalizeAngle(holdHdg - robot.theta);
@@ -775,8 +826,20 @@ static Pose steerPose(const Pose& robot) {
     return s;
 }
 
+static constexpr int maxMirroredPoints = 256;
+static Point mirroredPath[maxMirroredPoints];
+
 void followPath(const Point* pts, int len, const PathOpts& opts) {
     if (pts == nullptr || len < 2) return;
+    if (mirrorPaths) {
+        if (len > maxMirroredPoints) {
+            printf("followPath: %d points is more than the mirror buffer (%d)\n", len, maxMirroredPoints);
+            fflush(stdout);
+            return;
+        }
+        for (int i = 0; i < len; i++) mirroredPath[i] = mirrorPoint(pts[i]);
+        pts = mirroredPath;
+    }
     activePath = pts;
     activeLen  = len;
     activeOpts = opts;
@@ -792,6 +855,7 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
     resetFlags();
     double flagProgressMm = 0.0;
     bool   stalled = false;
+    bool   grabbed = false;
 
     // Flags at the very start fire before the robot moves.
     checkFlags(getPose(), flagProgressMm, 0);
@@ -809,7 +873,8 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
         haveLastLook = false;
         auto aimErr = [&](const Pose& p) { return headingErrorToTarget(aim, steerPose(p)); };
         if (fabs(aimErr(getPose())) > startTurnSkipRad) {
-            profiledTurn(aimErr, pathStartTurnToleranceRad);
+            // Path pursuit corrects residual heading error, so leave the turn as soon as it's in tolerance.
+            profiledTurn(aimErr, activeOpts.startTurnTolRad_, 1, 0, activeOpts.startTurnAccel_);
         }
     }
     uint32_t turnDoneMs = timer::system();
@@ -835,6 +900,20 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
         double distToEnd = sqrt(dxEnd*dxEnd + dyEnd*dyEnd);
 
         if (distToEnd < activeOpts.endTol_) break;
+
+        if (activeOpts.grabMm_ > 0.0 && clawDist.installed()) {
+            double objMm = clawDist.objectDistance(distanceUnits::mm);
+            if (objMm > 0.0 && objMm <= activeOpts.grabMm_) {
+                claw.set(true);
+                if (activeOpts.grabLift_) setLiftTarget(activeOpts.grabLiftMm_);
+                grabbed = true;
+                if (debugTelemetry) {
+                    printf("claw grab at %.0f mm, r:(%.0f,%.0f)\n", objMm, robot.x, robot.y);
+                    fflush(stdout);
+                }
+                break;
+            }
+        }
 
         updateRobotSegment(robot);
         checkFlags(robot, flagProgressMm, robotSegment);
@@ -878,9 +957,12 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
         double cornerCap = cornerSpeedCap(robot);
         distLeft = fmin(distLeft, cornerCap * cornerCap / (2.0 * activeOpts.maxAccel_));
 
+        int  ptsLeft    = activeLen - 1 - robotSegment;
+        bool stallArmed = activeOpts.stallLastPts_ <= 0 || ptsLeft <= activeOpts.stallLastPts_;
+
         double movedX = robot.x - stallRef.x;
         double movedY = robot.y - stallRef.y;
-        if (sqrt(movedX*movedX + movedY*movedY) > stallMinMoveMm) {
+        if (!stallArmed || sqrt(movedX*movedX + movedY*movedY) > stallMinMoveMm) {
             stallRef = robot;
             stallTimerMs = 0.0;
         } else {
@@ -918,7 +1000,7 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
     stopDrive();
 
     // Finished inside the end tolerance: fire anything still pending.
-    if (!stalled) {
+    if (!stalled && !grabbed) {
         Pose fin = getPose();
         for (int i = 0; i < flagCount; i++) {
             if (!flagFired[i] && !flags[i].stop) fireFlag(i, fin);
@@ -938,7 +1020,7 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
         fflush(stdout);
     }
 
-    if (debugTelemetry) {
+    if (debugTelemetry && debugEndSettle) {
         runTimerExcludeMs += 300;
         this_thread::sleep_for(300);   // settle so the final pose is real
         Pose fin = getPose();
@@ -949,4 +1031,8 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
     }
 
     activeOpts = PathOpts();
+}
+
+double getOdomSpeedMmS() {
+    return odomSpeedMmS;
 }

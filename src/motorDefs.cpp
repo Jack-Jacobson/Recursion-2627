@@ -17,6 +17,10 @@ vex::motor lift3(vex::PORT3, false);
 vex::rotation odomPod(vex::PORT20, false);
 vex::inertial inertialSensor(vex::PORT19);
 vex::distance liftSensor(vex::PORT11);
+vex::distance clawDist(vex::PORT17);
+
 
 vex::digital_out claw = vex::digital_out(Brain.ThreeWirePort.A);
 vex::digital_out roller = vex::digital_out(Brain.ThreeWirePort.B);
+vex::digital_out rightToggler = vex::digital_out(Brain.ThreeWirePort.C);
+vex::digital_out leftToggler = vex::digital_out(Brain.ThreeWirePort.D);

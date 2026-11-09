@@ -18,6 +18,8 @@ extern double lastTimeRan[5];
 void setDrive();
 void moveCascade();
 void toggleClaw();
+void rightToggle();
+void leftToggle();
 
 double clamp(double value, double hiClamp, double loClamp, double deadHi, double deadLo);
 double PID(double Ti, double error, int Values);

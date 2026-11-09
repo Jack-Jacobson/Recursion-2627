@@ -98,8 +98,13 @@ constexpr double startHeadingRad = 0;
 constexpr bool debugTelemetry = true;
 constexpr int debugPrintLoopInterval = 10;
 constexpr bool timeRuns = true;
+// Adds a 300 ms pause after every path to print the settled pose; leave false for real runs.
+constexpr bool debugEndSettle = false;
 
 constexpr double minVelocityMmS = 250.0;
+
+// PathOpts().grabAt(): claw distance sensor trigger
+constexpr double clawGrabDistMm = 50.0;
 
 // driveDistance()
 constexpr double driveDistToleranceMm = 10.0;
@@ -146,6 +151,14 @@ double headingErrorToTarget(const Point& target, const Pose& pose);
 
 void initOdom();
 
+// Mirror across the y = x diagonal (left wall <-> bottom wall). Applies to paths,
+// flag points, turnToFace() targets and turnToHeading() angles. Call resetPoseToStart()
+// after changing it so odom starts at the (mirrored) start of path1.
+void setPathMirror(bool on);
+bool pathMirrored();
+Point mirrorPoint(const Point& p);
+void resetPoseToStart();
+
 
 void updateOdom();
 
@@ -172,12 +185,15 @@ double distanceToPathEnd(const Pose& robot);
 
 double targetVelocity(double kappa, double distLeft, double prevVel, double dt);
 
+double getOdomSpeedMmS();
+
 void driveWithCurvature(double v, double kappa);
 
 void driveWithYawRate(double v, double omega);
 
 // Holds heading, negative distance backs up.
-void driveDistance(double distMm, double maxVel = driveDistDefaultVel, double stallMs = stallCheckMs);
+void driveDistance(double distMm, double maxVel = driveDistDefaultVel, double stallMs = stallCheckMs,
+                   double maxAccel = maxAccelMmS2);
 
 void turnToFace(const Point& target, double toleranceRad = startTurnToleranceRad);
 
@@ -194,13 +210,26 @@ struct PathOpts {
     double maxAccel_    = maxAccelMmS2;
     double maxLatAccel_ = maxLatAccelMmS2; // corner speed limit, higher = faster corners but more slip
     double stallMs_     = stallCheckMs;    // end the path if barely moving for this long
+    double endVel_      = 0.0;             // mm/s the path may still be moving at the end (0 = decel to a stop)
+    int    stallLastPts_ = 0;              // >0: only stall-check once this many points remain; 0 = always check
     bool   reverse_     = false;           // drive the path backwards (back of robot leads)
     bool   startTurn_   = true;
+    double startTurnTolRad_ = pathStartTurnToleranceRad;   // start turn ends once within this heading error
+    double startTurnAccel_ = turnAccelRadS2;               // start-turn ramp-up rate (rad/s^2)
+    PathOpts& startTurnAccel(double radS2) { startTurnAccel_ = radS2; return *this; }
+    PathOpts& startTurnTol(double deg) { startTurnTolRad_ = deg * M_PI / 180.0; return *this; }
+    double grabMm_      = 0.0;             // >0: close the claw and end the path when clawDist reads <= this
     PathOpts& maxVel(double v)       { maxVel_ = v;    return *this; }
+    bool   grabLift_    = false;           // true: set the lift target to grabLiftMm_ when the grab triggers
+    double grabLiftMm_  = 0.0;
+    PathOpts& grabLift(double mm)    { grabLift_ = true; grabLiftMm_ = mm; return *this; }
+    PathOpts& grabAt(double mm = clawGrabDistMm) { grabMm_ = mm; return *this; }
     PathOpts& endTol(double mm)      { endTol_ = mm;   return *this; }
     PathOpts& maxAccel(double a)     { maxAccel_ = a;  return *this; }
     PathOpts& maxLatAccel(double a)  { maxLatAccel_ = a; return *this; }
     PathOpts& stallMs(double ms)     { stallMs_ = ms;  return *this; }
+    PathOpts& endVel(double v)       { endVel_ = v;   return *this; }
+    PathOpts& stallLastPts(int n)    { stallLastPts_ = n; return *this; }
     PathOpts& reverse(bool r = true) { reverse_ = r;   return *this; }
     PathOpts& noStartTurn()          { startTurn_ = false; return *this; }
 };
