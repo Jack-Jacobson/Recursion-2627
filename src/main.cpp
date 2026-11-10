@@ -211,7 +211,6 @@ void usercontrol(void) {
     bool curRight = Controller.ButtonRight.pressing();
     if (curRight && !prevRight) {
       setLiftControl(true);
-      printf("t");
       setLiftTarget(138);
     }
     prevRight = curRight;

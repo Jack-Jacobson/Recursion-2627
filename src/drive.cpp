@@ -72,6 +72,9 @@ void moveCascade(){
     return;
   }
 
+  // A macro owns the lift via PID; don't fight it with stop().
+  if (isLiftControlEnabled()) return;
+
   if (coastMode || brakeLockedOut) {
     lift1.stop(brakeType::coast);
     lift2.stop(brakeType::coast);
