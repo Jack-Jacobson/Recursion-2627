@@ -164,7 +164,6 @@ void autonomous(void)
   setLiftTarget(0);
   setClawState(false);
   endRunTimer();
- setLiftTarget(200);
 }
 
 constexpr double driverPeriodSec = 105.0;
