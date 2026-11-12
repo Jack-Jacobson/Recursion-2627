@@ -142,17 +142,17 @@ void autonomous(void)
   wait(0.25, sec);
   setClawState(false);
   driveDistance(-300, 3000, 220, 2600);
-  setLiftTarget(120);
-  followPath(2, PathOpts().startTurnTol(5).startTurnAccel(30).grabAt(110).grabLift(200).endVel(500).grabLift(300));
+  setLiftTarget(160);
+  followPath(2, PathOpts().startTurnTol(5).startTurnAccel(30).grabAt(110).grabLift(200).endVel(500).grabLift(360));
   addFlag(path3[path3Length / 2], []() { setLiftTarget(190); });
   followPath(3, PathOpts().noStartTurn());
   setLiftTarget(0);
   wait(0.2, sec);
   setClawState(false);
   followPath(4, PathOpts().reverse().maxAccel(6000).stallLastPts(6).stallMs(50));
-  followPath(5, PathOpts().endVel(800).grabAt(130).grabLift(270).noStartTurn());
+  followPath(5, PathOpts().endVel(800).grabAt(130).grabLift(360).noStartTurn());
   setClawState(true);
-  setLiftTarget(270);
+  setLiftTarget(360);
   followPath(6, PathOpts().noStartTurn().endVel(0));
   liftTo(0, 400);
   setClawState(false);
@@ -164,6 +164,7 @@ void autonomous(void)
   setLiftTarget(0);
   setClawState(false);
   endRunTimer();
+ setLiftTarget(200);
 }
 
 constexpr double driverPeriodSec = 105.0;
