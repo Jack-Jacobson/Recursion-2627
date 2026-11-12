@@ -30,6 +30,17 @@ void setDrive() {
  int leftVelocity = 0.12 * (forward + sideways);
  int rightVelocity = 0.12 * (forward - sideways);
 
+ // Sticks released: coast instead of holding/braking (autonomous may leave hold set).
+ if (forward == 0 && sideways == 0) {
+   frontLeftDrive.stop(brakeType::coast);
+   midLeftDrive.stop(brakeType::coast);
+   backLeftDrive.stop(brakeType::coast);
+   frontRightDrive.stop(brakeType::coast);
+   midRightDrive.stop(brakeType::coast);
+   backRightDrive.stop(brakeType::coast);
+   return;
+ }
+
  frontLeftDrive.spin(directionType::fwd,  leftVelocity,  voltageUnits::volt);
   midLeftDrive.spin(directionType::fwd,    leftVelocity,  voltageUnits::volt);
   backLeftDrive.spin(directionType::fwd,   leftVelocity,  voltageUnits::volt);
@@ -87,9 +98,17 @@ void moveCascade(){
 }
 
 bool clawed = true;
+void setClawState(bool closed){
+  clawed = closed;
+  claw.set(closed);
+}
+
+bool isClawClosed(){
+  return clawed;
+}
+
 void toggleClaw(){
-  clawed = !clawed;
-  claw.set(clawed);
+  setClawState(!clawed);
 }
 
 bool rightToggled = false;

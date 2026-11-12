@@ -17,6 +17,8 @@ extern double lastTimeRan[5];
 
 void setDrive();
 void moveCascade();
+void setClawState(bool closed);
+bool isClawClosed();
 void toggleClaw();
 void rightToggle();
 void leftToggle();

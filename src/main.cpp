@@ -89,7 +89,7 @@ competition Competition;
 void pre_auton(void)
 {
   vex::thread UIThread(brainUI);
-  claw.set(true);
+  setClawState(true);
   initOdom();
   vex::thread odomThread(updateOdom);
   startLift();
@@ -104,7 +104,7 @@ void scorePin(void)
   followPath(1, PathOpts().noStartTurn());
   liftTo(60);
   wait(0.3, sec);
-  claw.set(false);
+  setClawState(false);
   driveDistance(-400, 800, 300);
   setLiftTarget(-20);
 }
@@ -140,29 +140,29 @@ void autonomous(void)
   followPath(1, PathOpts().noStartTurn().maxAccel(2600).stallLastPts(6).stallMs(50));
   setLiftTarget(0);
   wait(0.25, sec);
-  claw.set(false);
+  setClawState(false);
   driveDistance(-300, 3000, 220, 2600);
-  setLiftTarget(130);
+  setLiftTarget(124);
   followPath(2, PathOpts().startTurnTol(5).startTurnAccel(30).grabAt(110).grabLift(200).endVel(500).grabLift(300));
   addFlag(path3[path3Length / 2], []() { setLiftTarget(190); });
   followPath(3, PathOpts().noStartTurn());
   setLiftTarget(0);
   wait(0.2, sec);
-  claw.set(false);
+  setClawState(false);
   followPath(4, PathOpts().reverse().maxAccel(6000).stallLastPts(6).stallMs(50));
   followPath(5, PathOpts().endVel(800).grabAt(130).grabLift(270).noStartTurn());
-  claw.set(true);
+  setClawState(true);
   setLiftTarget(270);
-  followPath(6, PathOpts().noStartTurn().endVel(600));
+  followPath(6, PathOpts().noStartTurn().endVel(0));
   liftTo(0, 400);
-  claw.set(false);
+  setClawState(false);
   driveDistance(-300, 4000, 220, 3500);
   setLiftTarget(0);
-  followPath(7, PathOpts().endVel(800).grabAt(185).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(400));
-  claw.set(true);
-  setLiftTarget(270);
-  followPath(8, PathOpts().maxAccel(2600));
-  liftTo(0, 900);
+  followPath(7, PathOpts().endVel(800).grabAt(140).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
+  followPath(8, PathOpts().maxAccel(2600).grabAt (140).grabLift(270).endOnGrab(false));
+  liftTo(0, 400);
+  setLiftTarget(0);
+  setClawState(false);
   endRunTimer();
 }
 
@@ -172,7 +172,6 @@ constexpr double driverPeriodSec = 105.0;
 double autoClawMm = 45.0;
 constexpr double autoClawHeadwayS = 0.06;
 constexpr double autoClawMaxMm = 130.0;
-extern bool clawed;
 
 
 struct RumbleCue
@@ -242,12 +241,11 @@ void usercontrol(void) {
     }
     prevR2 = curR2;
 
-    if (Controller.ButtonR1.pressing() && !clawed && clawDist.installed()) {
+    if (Controller.ButtonR1.pressing() && !isClawClosed() && clawDist.installed()) {
       double dynamicClawMm = fmin(autoClawMaxMm, autoClawMm + getOdomSpeedMmS() * autoClawHeadwayS);
       double objMm = clawDist.objectDistance(mm);
       if (objMm > 0.0 && objMm <= dynamicClawMm) {
-        clawed = true;
-        claw.set(true);
+        setClawState(true);
       }
     }
 
@@ -261,12 +259,11 @@ void usercontrol(void) {
 
     static bool prevY = false;
     bool curY = Controller.ButtonY.pressing();
-    if (curY && !prevY && !clawed && clawDist.installed()) {
+    if (curY && !prevY && !isClawClosed() && clawDist.installed()) {
       double dynamicClawMm = fmin(autoClawMaxMm, autoClawMm + getOdomSpeedMmS() * autoClawHeadwayS);
       double objMm = clawDist.objectDistance(mm);
       if (objMm > 0.0 && objMm <= dynamicClawMm) {
-        clawed = true;
-        claw.set(true);
+        setClawState(true);
         setLiftControl(true);
         setLiftTarget(30);
       }
