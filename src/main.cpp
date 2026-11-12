@@ -142,7 +142,7 @@ void autonomous(void)
   wait(0.25, sec);
   setClawState(false);
   driveDistance(-300, 3000, 220, 2600);
-  setLiftTarget(124);
+  setLiftTarget(120);
   followPath(2, PathOpts().startTurnTol(5).startTurnAccel(30).grabAt(110).grabLift(200).endVel(500).grabLift(300));
   addFlag(path3[path3Length / 2], []() { setLiftTarget(190); });
   followPath(3, PathOpts().noStartTurn());
@@ -158,7 +158,7 @@ void autonomous(void)
   setClawState(false);
   driveDistance(-300, 4000, 220, 3500);
   setLiftTarget(0);
-  followPath(7, PathOpts().endVel(800).grabAt(140).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
+  followPath(7, PathOpts().endVel(800).grabAt(150).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
   followPath(8, PathOpts().maxAccel(2600).grabAt (140).grabLift(270).endOnGrab(false));
   liftTo(0, 400);
   setLiftTarget(0);
