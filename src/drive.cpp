@@ -27,24 +27,27 @@ void setDrive() {
  if (abs(forward) < 5) forward = 0;
  if (abs(sideways) < 5) sideways = 0;
 
-
- frontLeftDrive.setStopping(brakeType::coast);
- midLeftDrive.setStopping(brakeType::coast);
- backLeftDrive.setStopping(brakeType::coast);
- frontRightDrive.setStopping(brakeType::coast);
- midRightDrive.setStopping(brakeType::coast);
- backRightDrive.setStopping(brakeType::coast);
-
  int leftVelocity = 0.12 * (forward + sideways);
  int rightVelocity = 0.12 * (forward - sideways);
+
+ // Sticks released: coast instead of holding/braking (autonomous may leave hold set).
+ if (forward == 0 && sideways == 0) {
+   frontLeftDrive.stop(brakeType::coast);
+   midLeftDrive.stop(brakeType::coast);
+   backLeftDrive.stop(brakeType::coast);
+   frontRightDrive.stop(brakeType::coast);
+   midRightDrive.stop(brakeType::coast);
+   backRightDrive.stop(brakeType::coast);
+   return;
+ }
 
  frontLeftDrive.spin(directionType::fwd,  leftVelocity,  voltageUnits::volt);
   midLeftDrive.spin(directionType::fwd,    leftVelocity,  voltageUnits::volt);
   backLeftDrive.spin(directionType::fwd,   leftVelocity,  voltageUnits::volt);
 
   frontRightDrive.spin(directionType::fwd, rightVelocity, voltageUnits::volt);
-  midRightDrive.spin(directionType::fwd,   rightVelocity,  voltageUnits::volt);
-  backRightDrive.spin(directionType::fwd,  rightVelocity,  voltageUnits::volt);
+  midRightDrive.spin(directionType::fwd,   rightVelocity, voltageUnits::volt);
+  backRightDrive.spin(directionType::fwd,  rightVelocity, voltageUnits::volt);
 
 }
 // Hold L2: raise while held and clear coast lockout.
@@ -80,8 +83,8 @@ void moveCascade(){
     return;
   }
 
-  // A lift macro (PID) owns the motors; don't fight it.
-  if (liftControlEnabled()) return;
+  // A macro owns the lift via PID; don't fight it with stop().
+  if (isLiftControlEnabled()) return;
 
   if (coastMode || brakeLockedOut) {
     lift1.stop(brakeType::coast);
@@ -95,9 +98,17 @@ void moveCascade(){
 }
 
 bool clawed = true;
+void setClawState(bool closed){
+  clawed = closed;
+  claw.set(closed);
+}
+
+bool isClawClosed(){
+  return clawed;
+}
+
 void toggleClaw(){
-  clawed = !clawed;
-  claw.set(clawed);
+  setClawState(!clawed);
 }
 
 bool rightToggled = false;

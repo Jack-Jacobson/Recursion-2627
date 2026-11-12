@@ -14,9 +14,9 @@ constexpr double liftFilterAlpha  = 0.35;   // lower = smoother but laggier
 
 constexpr double liftKp           = 0.08;
 constexpr double liftKi           = 0.0005;
-constexpr double liftKd           = 10;    // V per m/s
+constexpr double liftKd           = 11.5;    // V per m/s
 constexpr double liftKg           = 0.0;  
-constexpr double liftMaxVolts     = 12.0;
+constexpr double liftMaxVolts     = 10.0;
 
 constexpr double liftDownKpScale  = 0.5; // Lower for overshoot when going down
 constexpr double liftMaxDownVolts = 6.0;
@@ -41,7 +41,7 @@ void setLiftTarget(double mm);
 
 // false = lift thread stops commanding the motors (driver control drives them directly)
 void setLiftControl(bool enabled);
-bool liftControlEnabled();
+bool isLiftControlEnabled();
 
 // Blocking until settled or timeout
 void liftTo(double mm, int timeoutMs = 1200);

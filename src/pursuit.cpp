@@ -7,6 +7,7 @@
 /*----------------------------------------------------------------------------*/
 #include "pursuit.h"
 #include "lift.h"
+#include "drive.h"
 
 using namespace vex;
 
@@ -855,7 +856,8 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
     resetFlags();
     double flagProgressMm = 0.0;
     bool   stalled = false;
-    bool   grabbed = false;
+    bool   endedByGrab = false;
+    bool   grabTriggered = false;
 
     // Flags at the very start fire before the robot moves.
     checkFlags(getPose(), flagProgressMm, 0);
@@ -901,17 +903,20 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
 
         if (distToEnd < activeOpts.endTol_) break;
 
-        if (activeOpts.grabMm_ > 0.0 && clawDist.installed()) {
+        if (!grabTriggered && activeOpts.grabMm_ > 0.0 && clawDist.installed()) {
             double objMm = clawDist.objectDistance(distanceUnits::mm);
             if (objMm > 0.0 && objMm <= activeOpts.grabMm_) {
-                claw.set(true);
+                setClawState(true);
                 if (activeOpts.grabLift_) setLiftTarget(activeOpts.grabLiftMm_);
-                grabbed = true;
+                grabTriggered = true;
                 if (debugTelemetry) {
                     printf("claw grab at %.0f mm, r:(%.0f,%.0f)\n", objMm, robot.x, robot.y);
                     fflush(stdout);
                 }
-                break;
+                if (activeOpts.endOnGrab_) {
+                    endedByGrab = true;
+                    break;
+                }
             }
         }
 
@@ -1000,7 +1005,7 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
     stopDrive();
 
     // Finished inside the end tolerance: fire anything still pending.
-    if (!stalled && !grabbed) {
+    if (!stalled && !endedByGrab) {
         Pose fin = getPose();
         for (int i = 0; i < flagCount; i++) {
             if (!flagFired[i] && !flags[i].stop) fireFlag(i, fin);

@@ -218,12 +218,14 @@ struct PathOpts {
     double startTurnAccel_ = turnAccelRadS2;               // start-turn ramp-up rate (rad/s^2)
     PathOpts& startTurnAccel(double radS2) { startTurnAccel_ = radS2; return *this; }
     PathOpts& startTurnTol(double deg) { startTurnTolRad_ = deg * M_PI / 180.0; return *this; }
-    double grabMm_      = 0.0;             // >0: close the claw and end the path when clawDist reads <= this
+    double grabMm_      = 0.0;             // >0: close the claw when clawDist reads <= this
+    bool   endOnGrab_   = true;            // true: grabAt() ends this path segment when it triggers
     PathOpts& maxVel(double v)       { maxVel_ = v;    return *this; }
     bool   grabLift_    = false;           // true: set the lift target to grabLiftMm_ when the grab triggers
     double grabLiftMm_  = 0.0;
     PathOpts& grabLift(double mm)    { grabLift_ = true; grabLiftMm_ = mm; return *this; }
     PathOpts& grabAt(double mm = clawGrabDistMm) { grabMm_ = mm; return *this; }
+    PathOpts& endOnGrab(bool on = true) { endOnGrab_ = on; return *this; }
     PathOpts& endTol(double mm)      { endTol_ = mm;   return *this; }
     PathOpts& maxAccel(double a)     { maxAccel_ = a;  return *this; }
     PathOpts& maxLatAccel(double a)  { maxLatAccel_ = a; return *this; }
