@@ -132,7 +132,7 @@ void autonomous(void)
       driveDistance(90);
       break;
   }
-  */
+  */  
   startRunTimer();
   roller.set(true);
   wait(0.3, sec);
@@ -142,8 +142,8 @@ void autonomous(void)
   wait(0.25, sec);
   setClawState(false);
   driveDistance(-300, 3000, 220, 2600);
-  setLiftTarget(124);
-  followPath(2, PathOpts().startTurnTol(5).startTurnAccel(30).grabAt(110).grabLift(200).endVel(500).grabLift(300));
+  setLiftTarget(128);
+  followPath(2, PathOpts().startTurnTol(5).startTurnAccel(30).grabAt(110).grabLift(200).endVel(500).grabLift(360));
   addFlag(path3[path3Length / 2], []() { setLiftTarget(190); });
   followPath(3, PathOpts().noStartTurn());
   setLiftTarget(0);
@@ -158,23 +158,24 @@ void autonomous(void)
   setClawState(false);
   driveDistance(-300, 4000, 220, 3500);
   setLiftTarget(0);
-  followPath(7, PathOpts().endVel(800).grabAt(140).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
-  followPath(8, PathOpts().maxAccel(2600).grabAt (140).grabLift(270).endOnGrab(false));
+  followPath(7, PathOpts().endVel(800).grabAt(155).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
+  followPath(8, PathOpts().maxAccel(2600).grabAt(155).grabLift(270).endOnGrab(false));
   liftTo(0, 400);
   setLiftTarget(0);
   setClawState(false);
   driveDistance(-200, 3000, 220, 2600);
-  followPath(9, PathOpts().maxAccel(2900));
-  claw.set(true); 
-  wait(0.2, sec);
-  driveDistance(-200, 3000, 220, 2600);
-  setLiftTarget(450);
-  turnToHeading(90);
-  followPath(10, PathOpts().endTol(250).noStartTurn());
-  liftTo(0, 400);
-  claw.set(false);
-  driveDistance(-200, 3000, 220, 2600);
-  turnToHeading(270);
+  followPath(9, PathOpts().maxAccel(2900).grabAt(140).grabLift(30));
+  driveDistance(-180, 4000, 220, 2200);
+  setLiftTarget(460);
+  followPath(10, PathOpts().endVel(400));
+  liftTo(300, 400);
+  setClawState(false);
+  followPath(11, PathOpts().maxAccel(2900).endVel(200).reverse().noStartTurn());
+  setLiftTarget(0);
+  followPath(12, PathOpts().grabAt(140).grabLift(30));
+  endRunTimer();
+  
+  /*
   followPath(11, PathOpts().maxAccel(2900).noStartTurn());
   claw.set(true);
   wait(0.2, sec);
@@ -187,6 +188,7 @@ void autonomous(void)
   driveDistance(-200, 3000, 220, 2600);
   turnToHeading(270);
   followPath(11, PathOpts().maxAccel(2900).noStartTurn());
+  */
 }
 
 constexpr double driverPeriodSec = 105.0;
