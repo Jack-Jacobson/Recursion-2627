@@ -92,7 +92,7 @@ def read_export():
         if len(parts) < 2:
             continue
         try:
-            x, y = float(parts[0]), float(parts[1])
+            x, y = float(parts[0]), float   (parts[1])
         except ValueError:
             continue
         point = f"{{{x * 10.0:.1f}, {y * 10.0:.1f}}}"   # cm -> mm
