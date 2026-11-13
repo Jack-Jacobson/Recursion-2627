@@ -9,6 +9,7 @@ static double          liftZeroMm    = 0.0;
 static bool            liftStarted   = false;
 static volatile bool   liftEnabled   = true;
 static volatile bool   liftHoming    = false; // true = encoder home move owns the motors
+static volatile int    liftOverride  = 0;     // 0 = off, 1 = max volts up, -1 = max volts down
 
 static double liftHomeDeg[3] = {0.0, 0.0, 0.0};
 static bool   liftHomeSet    = false;
@@ -94,7 +95,11 @@ static int liftTask() {
                          (fabs(error) < liftHoldExitMm && predError * error <= 0.0)))
             holding = true;
 
-        if (!liftEnabled || liftHoming) {
+        if (liftOverride != 0) {
+            integral = 0.0;
+            holding  = true;
+            spinLift(liftOverride > 0 ? 12.0 : -12.0);
+        } else if (!liftEnabled || liftHoming) {
             integral = 0.0;
             holding  = true;
         } else if (holding) {
@@ -142,6 +147,17 @@ void setLiftTarget(double mm) {
     liftTargetMm = fmin(fmax(mm, 0.0), liftMaxHeightMm);
     liftSettled  = 0;
     liftHoming   = false; // hand the motors back to the PID
+}
+
+// Spins the lift at max voltage, overriding the PID, targets and homing.
+// dir: 1 = up, -1 = down, 0 = release (PID resumes)
+void liftForce(int dir) {
+    liftOverride = dir > 0 ? 1 : (dir < 0 ? -1 : 0);
+    if (dir != 0) {
+        spinLift(dir > 0 ? 12.0 : -12.0);
+    } else {
+        holdLift();
+    }
 }
 
 void setLiftControl(bool enabled) { liftEnabled = enabled; }

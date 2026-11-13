@@ -5,7 +5,7 @@
 
 // Lift PID on the distance sensor heights are mm of travel, 0 = position at startLift()
 
-constexpr double liftMaxHeightMm  = 1000.0; // targets clamped to max if this
+constexpr double liftMaxHeightMm  = 15000.0; // targets clamped to max if this
 constexpr double liftSensorMaxMm  = 1000.0; // readings above this are invalid
 
 // Median then EMA
@@ -38,6 +38,9 @@ void startLift();
 
 // Non-blocking
 void setLiftTarget(double mm);
+
+// Spin lift at max voltage, overriding PID/targets/homing. 1 = up, -1 = down, 0 = release
+void liftForce(int dir);
 
 // false = lift thread stops commanding the motors (driver control drives them directly)
 void setLiftControl(bool enabled);

@@ -30,6 +30,14 @@ extern Point path11[];
 extern const int path11Length;
 extern Point path12[];
 extern const int path12Length;
+extern Point path13[];
+extern const int path13Length;
+extern Point path14[];
+extern const int path14Length;
+extern Point path15[];
+extern const int path15Length;
+extern Point path16[];
+extern const int path16Length;
 
 extern const PathRef paths[];
 extern const int pathCount;

@@ -150,7 +150,7 @@ void autonomous(void)
   wait(0.2, sec);
   setClawState(false);
   followPath(4, PathOpts().reverse().maxAccel(6000).stallLastPts(6).stallMs(50));
-  followPath(5, PathOpts().endVel(800).grabAt(130).grabLift(270).noStartTurn());
+  followPath(5, PathOpts().endVel(800).grabAt(136).grabLift(270).noStartTurn());
   setClawState(true);
   setLiftTarget(270);
   followPath(6, PathOpts().noStartTurn().endVel(0));
@@ -158,8 +158,8 @@ void autonomous(void)
   setClawState(false);
   driveDistance(-300, 4000, 220, 3500);
   setLiftTarget(0);
-  followPath(7, PathOpts().endVel(800).grabAt(155).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
-  followPath(8, PathOpts().maxAccel(2600).grabAt(155).grabLift(270).endOnGrab(false));
+  followPath(7, PathOpts().endVel(800).grabAt(170).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
+  followPath(8, PathOpts().maxAccel(2600).grabAt (170).grabLift(270).endOnGrab(false));
   liftTo(0, 400);
   setLiftTarget(0);
   setClawState(false);
@@ -170,25 +170,32 @@ void autonomous(void)
   followPath(10, PathOpts().endVel(400));
   liftTo(300, 400);
   setClawState(false);
-  followPath(11, PathOpts().maxAccel(2900).endVel(200).reverse().noStartTurn());
+  followPath(11, PathOpts().maxAccel(2700).reverse().noStartTurn().endTol(200));
   setLiftTarget(0);
   followPath(12, PathOpts().grabAt(140).grabLift(30));
+  driveDistance(-180, 4000, 220, 2200);
+  setLiftTarget(650);
+  followPath(16, PathOpts().endVel(400));
+  liftTo(300, 400);
+  setClawState(false);
+  followPath(11, PathOpts().maxAccel(2700).reverse().noStartTurn().endTol(200));
+  setLiftTarget(0);
+  followPath(13, PathOpts().grabAt(140).grabLift(30));
+  driveDistance(-180, 4000, 220, 2200);
+  setLiftTarget(850);
+  followPath(14, PathOpts().endVel(400));
+  liftTo(300, 400);
+  setClawState(false);
+  followPath(11, PathOpts().maxAccel(2700).reverse().noStartTurn().endTol(200));
+  setLiftTarget(0);
+  followPath(15, PathOpts().grabAt(140).grabLift(30));
+  driveDistance(-160, 4000, 220, 2200);
+  liftForce(1);
+  followPath(14, PathOpts().endVel(400));
+  liftForce(0);
+  liftTo(300, 400);
   endRunTimer();
-  
-  /*
-  followPath(11, PathOpts().maxAccel(2900).noStartTurn());
-  claw.set(true);
-  wait(0.2, sec);
-  driveDistance(-200, 3000, 220, 2600);
-  setLiftTarget(560);
-  turnToHeading(90);
-  followPath(10, PathOpts().endTol(250).noStartTurn());
-  liftTo(0, 400);
-  claw.set(false);
-  driveDistance(-200, 3000, 220, 2600);
-  turnToHeading(270);
-  followPath(11, PathOpts().maxAccel(2900).noStartTurn());
-  */
+
 }
 
 constexpr double driverPeriodSec = 105.0;
