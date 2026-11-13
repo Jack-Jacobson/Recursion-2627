@@ -12,11 +12,11 @@ constexpr double liftSensorMaxMm  = 1000.0; // readings above this are invalid
 constexpr int    liftMedianSize   = 5;
 constexpr double liftFilterAlpha  = 0.35;   // lower = smoother but laggier
 
-constexpr double liftKp           = 0.08;
+constexpr double liftKp           = 0.065;
 constexpr double liftKi           = 0.0005;
 constexpr double liftKd           = 10;    // V per m/s
 constexpr double liftKg           = 0.0;  
-constexpr double liftMaxVolts     = 12.0;
+constexpr double liftMaxVolts     = 10.0;
 
 constexpr double liftDownKpScale  = 0.5; // Lower for overshoot when going down
 constexpr double liftMaxDownVolts = 6.0;

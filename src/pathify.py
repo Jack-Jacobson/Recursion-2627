@@ -103,7 +103,7 @@ def read_export():
     if len(points) < 2:
         print(f"Not enough points in {source.name}")
         raise SystemExit(1)
-    return source, points
+    return source, points   
 
 
 def describe(body):
@@ -132,7 +132,7 @@ def main():
         if choice.isdigit() and 1 <= int(choice) <= new_num:
             num = int(choice)
             break
-        print(f"Enter a number from 1 to {new_num}.")
+        print(f"Enter a number fro m 1 to {new_num}.")
 
     paths[num] = format_points(points)
     write_files(paths)
