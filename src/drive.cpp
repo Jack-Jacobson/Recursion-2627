@@ -24,8 +24,8 @@ void setDrive() {
  int sideways = Controller.Axis1.position();
 
  // deadband to prevent drift
- if (abs(forward) < 5) forward = 0;
- if (abs(sideways) < 5) sideways = 0;
+ if (std::abs(static_cast<double>(forward)) < 5.0) forward = 0;
+ if (std::abs(static_cast<double>(sideways)) < 5.0) sideways = 0;
 
  int leftVelocity = 0.12 * (forward + sideways);
  int rightVelocity = 0.12 * (forward - sideways);
