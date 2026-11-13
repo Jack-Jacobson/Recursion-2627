@@ -103,7 +103,7 @@ def read_export():
     if len(points) < 2:
         print(f"Not enough points in {source.name}")
         raise SystemExit(1)
-    return source, points
+    return source, points   
 
 
 def describe(body):
