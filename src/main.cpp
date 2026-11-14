@@ -137,7 +137,7 @@ void autonomous(void)
   roller.set(true);
   wait(0.3, sec);
   setLiftTarget(120);
-  followPath(1, PathOpts().noStartTurn().maxAccel(2600).stallLastPts(6).stallMs(50));
+  followPath(1, PathOpts().noStartTurn().maxAccel(1800).stallLastPts(6).stallMs(50));
   setLiftTarget(0);
   wait(0.25, sec);
   setClawState(false);
@@ -160,11 +160,10 @@ void autonomous(void)
   setClawState(false);
   driveDistance(-300, 4000, 220, 3500);
   setLiftTarget(0);
-  followPath(7, PathOpts().endVel(800).grabAt(175).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
-  followPath(8, PathOpts().maxAccel(2600).grabAt (175).grabLift(270).endOnGrab(false));
+  followPath(7, PathOpts().endVel(800).grabAt(180).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
+  followPath(8, PathOpts().maxAccel(2600).grabAt (180).grabLift(270).endOnGrab(false));
   liftTo(0, 400);
   setLiftTarget(0);
-  setClawState(false);
   endRunTimer();
 }
 
