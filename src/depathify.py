@@ -1,8 +1,7 @@
 """Finds the jerryio export in Downloads that a path in paths.cpp came from."""
 import sys
-from pathlib import Path
 
-from pathify import DOWNLOADS, POINT_RE, load_paths
+from pathify import DOWNLOADS, POINT_RE, SETS, load_paths
 
 
 def cpp_points(body):
@@ -30,10 +29,11 @@ def export_points(source):
     return points
 
 
-def find_source(num):
-    paths = load_paths()
+def find_source(set_name, num):
+    paths = load_paths()[set_name]
+    prefix = SETS[set_name][0]
     if num not in paths:
-        print(f"path{num} not found in paths.cpp (have {sorted(paths)})")
+        print(f"{prefix}{num} not found in paths.cpp (have {sorted(paths)})")
         raise SystemExit(1)
     target = cpp_points(paths[num])
 
@@ -46,14 +46,23 @@ def find_source(num):
 
 
 def main():
-    arg = sys.argv[1] if len(sys.argv) > 1 else input("Path number: ").strip()
+    # Usage: depathify.py [awp|nw] [number]
+    args = sys.argv[1:]
+    set_name = "awp"
+    if args and args[0].lower() in SETS:
+        set_name = args.pop(0).lower()
+    elif not args:
+        s = input("Set [awp/nw, blank = awp]: ").strip().lower()
+        if s in SETS:
+            set_name = s
+    arg = args[0] if args else input("Path number: ").strip()
     if not arg.isdigit():
         print("Path number must be a positive integer.")
         raise SystemExit(1)
 
-    match = find_source(int(arg))
+    match = find_source(set_name, int(arg))
     if match is None:
-        print(f"No export in {DOWNLOADS} matches path{arg}.")
+        print(f"No export in {DOWNLOADS} matches {SETS[set_name][0]}{arg}.")
         raise SystemExit(1)
     print(match)
 

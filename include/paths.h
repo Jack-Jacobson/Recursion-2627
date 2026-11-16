@@ -25,3 +25,17 @@ extern const int path8Length;
 
 extern const PathRef paths[];
 extern const int pathCount;
+
+extern Point nwPath1[];
+extern const int nwPath1Length;
+extern Point nwPath2[];
+extern const int nwPath2Length;
+extern Point nwPath3[];
+extern const int nwPath3Length;
+extern Point nwPath4[];
+extern const int nwPath4Length;
+extern Point nwPath5[];
+extern const int nwPath5Length;
+
+extern const PathRef nwPaths[];
+extern const int nwPathCount;

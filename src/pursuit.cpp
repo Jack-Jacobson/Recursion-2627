@@ -24,6 +24,9 @@ static volatile double odomSpeedMmS = 0.0;
 
 
 void setPathMirror(bool on) { mirrorPaths = on; }
+
+static bool useNonWpPaths = false;
+void setNonWpPaths(bool on) { useNonWpPaths = on; }
 bool pathMirrored() { return mirrorPaths; }
 
 Point mirrorPoint(const Point& p) {
@@ -44,7 +47,7 @@ Pose getPose() {
 }
 
 Point getTarget() {
-    return path1[targetIndex];
+    return (useNonWpPaths ? nwPath1 : path1)[targetIndex];
 }
 
 bool reachedTarget(const Point& target, const Pose& pose) {
@@ -74,7 +77,7 @@ static double inertialThetaRad() {
 }
 
 void resetPoseToStart() {
-    Point start = mirrorPoint(path1[0]);
+    Point start = mirrorPoint(useNonWpPaths ? nwPath1[0] : path1[0]);
     double heading = mirrorHeading(startHeadingRad);
     poseMutex.lock();
     headingOffsetRad = heading
@@ -809,14 +812,16 @@ void driveDistance(double distMm, double maxVel, double stallMs, double maxAccel
 }
 
 void followPath(int pathNumber, const PathOpts& opts) {
-    if (pathNumber < 1 || pathNumber > pathCount) {
+    const PathRef* set = useNonWpPaths ? nwPaths : paths;
+    int count = useNonWpPaths ? nwPathCount : pathCount;
+    if (pathNumber < 1 || pathNumber > count) {
         if (debugTelemetry) {
-            printf("followPath(%d): no such path (have 1-%d)\n", pathNumber, pathCount);
+            printf("followPath(%d): no such path (have 1-%d)\n", pathNumber, count);
             fflush(stdout);
         }
         return;
     }
-    const PathRef& p = paths[pathNumber - 1];
+    const PathRef& p = set[pathNumber - 1];
     followPath(p.pts, p.len, opts);
 }
 

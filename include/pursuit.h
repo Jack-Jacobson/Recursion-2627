@@ -155,6 +155,10 @@ void initOdom();
 // flag points, turnToFace() targets and turnToHeading() angles. Call resetPoseToStart()
 // after changing it so odom starts at the (mirrored) start of path1.
 void setPathMirror(bool on);
+
+// Select the path set used by followPath(n) / resetPoseToStart(): false = AWP (paths),
+// true = Non-WP (nwPaths). Call resetPoseToStart() afterward.
+void setNonWpPaths(bool on);
 bool pathMirrored();
 Point mirrorPoint(const Point& p);
 void resetPoseToStart();

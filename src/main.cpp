@@ -112,27 +112,9 @@ void scorePin(void)
 static volatile bool autoHasRun = false;
 static volatile bool driverAutoDone = false;
 
-void autonomous(void)
+// Non-WP auto (uses nwPaths).
+void nonWpAuton(void)
 {
-  autoHasRun = true;
-  /**
-  // 1 = Non-Loader: same routine mirrored onto the other side.
-  setPathMirror(currentAuton == 1);
-  resetPoseToStart();
-
-  switch (currentAuton) {
-    case 0:
-    case 1:
-      loaderToggleAuton();
-      break;
-    case 2:
-      scorePin();
-      break;
-    default:
-      driveDistance(90);
-      break;
-  }
-  */
   startRunTimer();
   roller.set(true);
   wait(0.3, sec);
@@ -142,7 +124,34 @@ void autonomous(void)
   wait(0.25, sec);
   setClawState(false);
   driveDistance(-300, 3000, 220, 2600);
-  setLiftTarget(128);
+  setLiftTarget(0);
+  followPath(2, PathOpts().grabAt(125).grabLift(270));
+  followPath(3);
+  liftTo(0, 500);
+  setClawState(false);
+  driveDistance(-300, 4000, 220, 2600);
+  followPath(4, PathOpts().grabAt(140).grabLift(450));
+  followPath(5);
+  liftTo(0, 500);
+  setClawState(false);
+  driveDistance(-550, 4000, 220, 2600);
+  turnToHeading(180);
+  endRunTimer();
+}
+
+// AWP auto (uses paths). Default.
+void awpAuton(void)
+{
+  startRunTimer();
+  roller.set(true);
+  wait(0.3, sec);
+  setLiftTarget(120);
+  followPath(1, PathOpts().noStartTurn().maxAccel(1800).stallLastPts(6).stallMs(50));
+  setLiftTarget(0);
+  wait(0.25, sec);
+  setClawState(false);
+  driveDistance(-300, 3000, 220, 2600);
+  setLiftTarget(0);
   followPath(2, PathOpts().startTurnTol(5).startTurnAccel(30).grabAt(110).grabLift(270).endVel(500));
   addFlag(path3[path3Length / 2], []() { setLiftTarget(190); });
   followPath(3, PathOpts().noStartTurn());
@@ -161,10 +170,23 @@ void autonomous(void)
   driveDistance(-300, 4000, 220, 3500);
   setLiftTarget(0);
   followPath(7, PathOpts().endVel(800).grabAt(180).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
-  followPath(8, PathOpts().maxAccel(2600).grabAt (180).grabLift(270).endOnGrab(false));
+  followPath(8, PathOpts().maxAccel(2600).grabAt(180).grabLift(270).endOnGrab(false));
   liftTo(0, 400);
   setLiftTarget(0);
   endRunTimer();
+}
+
+void autonomous(void)
+{
+  autoHasRun = true;
+  // currentAuton: 0 = AWP (default), 1 = Non-WP.
+  setNonWpPaths(currentAuton == 1);
+  resetPoseToStart();
+  if (currentAuton == 1) {
+    nonWpAuton();
+  } else {
+    awpAuton();
+  }
 }
 
 constexpr double driverPeriodSec = 105.0;

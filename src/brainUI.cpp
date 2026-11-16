@@ -77,14 +77,10 @@ void drawAutonButton(int x, int y, int w, int h, std::string t, int autonNum, ve
             // Update controller display
             Controller.Screen.clearScreen();
             Controller.Screen.setCursor(1, 1);
-            if (currentAuton == -1) {
-                Controller.Screen.print("Auton: Drive Forward");
-            } else if (currentAuton == 0) {
-                Controller.Screen.print("Auton: Loader, Toggle");
+            if (currentAuton == 0) {
+                Controller.Screen.print("Auton: AWP");
             } else if (currentAuton == 1) {
-                Controller.Screen.print("Auton: Non-Loader, Toggle");
-            } else if (currentAuton == 2) {
-                Controller.Screen.print("Auton: Score Pin");
+                Controller.Screen.print("Auton: Non-WP");
             }
             
             wait(100, msec);
@@ -130,10 +126,8 @@ void brainUI(void) {
         Brain.Screen.setPenColor(white);
         Brain.Screen.setFont(prop30);
 
-        drawAutonButton(10, 10, 460, 44, "Drive Forward", -1, red);
-        drawAutonButton(10, 58, 460, 44, "Loader, Toggle", 0, white);
-        drawAutonButton(10, 106, 460, 44, "Non-Loader, Toggle", 1, white);
-        drawAutonButton(10, 154, 460, 44, "Score Pin", 2, white);
+        drawAutonButton(10, 10, 460, 70, "AWP", 0, white);
+        drawAutonButton(10, 90, 460, 70, "Non-WP", 1, white);
 
         Brain.Screen.setFont(prop20);
         drawButton(405, 212, 60, 20, "Back", 0);
