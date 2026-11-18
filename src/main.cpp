@@ -81,6 +81,7 @@ Rumble         At 60 s, 30 s, 10 s left
 #include "lift.h"
 #include "brainUI.h"
 #include "pursuit.h"
+#include "logger.h"
 
 using namespace vex;
 
@@ -93,6 +94,7 @@ void pre_auton(void)
   initOdom();
   vex::thread odomThread(updateOdom);
   startLift();
+  loggerInit(Competition);
 }
 
 void scorePin(void)
@@ -121,9 +123,9 @@ void autonomous(void)
   resetPoseToStart();
 
   switch (currentAuton) {
-    case 0:
+    case 0:loaderToggleAuton
     case 1:
-      loaderToggleAuton();
+      ();
       break;
     case 2:
       scorePin();
@@ -137,19 +139,19 @@ void autonomous(void)
   roller.set(true);
   wait(0.3, sec);
   setLiftTarget(120);
-  followPath(1, PathOpts().noStartTurn().maxAccel(2600).stallLastPts(6).stallMs(50));
+  followPath(1, PathOpts().noStartTurn().maxAccel(1800).stallLastPts(6).stallMs(50));
   setLiftTarget(0);
   wait(0.25, sec);
   setClawState(false);
   driveDistance(-300, 3000, 220, 2600);
-  setLiftTarget(125);
-  followPath(2, PathOpts().startTurnTol(5).startTurnAccel(30).grabAt(110).grabLift(270).endVel(500));
+  setLiftTarget(128);
+  followPath(2, PathOpts().startTurnTol(5).startTurnAccel(30).grabAt(110).grabLift(270).endVel(500).endTol(2));
   addFlag(path3[path3Length / 2], []() { setLiftTarget(190); });
   followPath(3, PathOpts().noStartTurn());
   setLiftTarget(0);
   wait(0.25, sec);
   setClawState(false);
-  addFlag(path4[path4Length/2], [](){ setLiftTarget(200); });
+  addFlag(path4[path4Length/2], [](){ setLiftTarget(150); });
   followPath(4, PathOpts().reverse().maxAccel(6000).stallLastPts(6).stallMs(50));
   addFlag(path5[path5Length/2], [](){ setLiftTarget(0); });
   followPath(5, PathOpts().endVel(800).grabAt(130).grabLift(270).noStartTurn());
@@ -160,8 +162,8 @@ void autonomous(void)
   setClawState(false);
   driveDistance(-300, 4000, 220, 3500);
   setLiftTarget(0);
-  followPath(7, PathOpts().endVel(800).grabAt(195).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
-  followPath(8, PathOpts().maxAccel(2600).grabAt (195).grabLift(270).endOnGrab(false));
+  followPath(7, PathOpts().endVel(800).grabAt(180).maxAccel(2900).grabLift(270).startTurnAccel(35).endVel(200));
+  followPath(8, PathOpts().maxAccel(2600).grabAt (180).grabLift(270).endOnGrab(false));
   liftTo(0, 400);
   setLiftTarget(0);
   setClawState(false);
@@ -180,26 +182,26 @@ void autonomous(void)
   followPath(16, PathOpts().endVel(400));
   liftTo(300, 400);
   setClawState(false);
-  followPath(11, PathOpts().maxAccel(2700).reverse().noStartTurn().endTol(200));
+  followPath(11, PathOpts().maxAccel(2700).reverse().noStartTurn());
   setLiftTarget(0);
-  followPath(19, PathOpts().grabAt(160).grabLift(30));
+  followPath(19, PathOpts().grabAt(160).grabLift(30).endOnGrab(false));
   driveDistance(-180, 4000, 220, 2200);
   setLiftTarget(850);
   followPath(14, PathOpts().endVel(400));
   liftTo(300, 400);
   setClawState(false);
-  followPath(11, PathOpts().maxAccel(2700).reverse().noStartTurn().endTol(200));
+  followPath(11, PathOpts().maxAccel(2700).reverse().noStartTurn());
   setLiftTarget(0);
-  followPath(15, PathOpts().grabAt(140).grabLift(30));
+  followPath(15, PathOpts().grabAt(140).grabLift(30).endOnGrab(false));
   driveDistance(-160, 4000, 220, 2200);
   liftForce(1);
   followPath(17, PathOpts().endVel(600).maxAccel(2600));
   liftForce(0);
   liftTo(300, 400);
   setClawState(false);
-  followPath(11, PathOpts().maxAccel(2700).reverse().noStartTurn().endTol(200));
+  followPath(11, PathOpts().maxAccel(2700).reverse().noStartTurn());
   setLiftTarget(0);
-  followPath(20, PathOpts().grabAt(140).grabLift(30));
+  followPath(20, PathOpts().grabAt(140).grabLift(30).endOnGrab(false));
   driveDistance(-180, 4000, 220, 2200);
   setLiftTarget(460);
   followPath(18, PathOpts().endVel(200));
@@ -207,15 +209,15 @@ void autonomous(void)
   setClawState(false);
   driveDistance(-180, 4000, 220, 2200);
   setLiftTarget(0);
-  followPath(22, PathOpts().grabAt(140).grabLift(30));
+  followPath(22, PathOpts().grabAt(140).grabLift(30).endOnGrab(false));
   driveDistance(-180, 4000, 220, 2200);
   setLiftTarget(650);
-  followPath(18, PathOpts().endVel(200));
+  followPath(18, PathOpts().endVel(200));                   
   liftTo(100, 700);
   setClawState(false);
   driveDistance(-180, 4000, 220, 2200);
   setLiftTarget(0);
-  followPath(22, PathOpts().grabAt(140).grabLift(30));
+  followPath(22, PathOpts().grabAt(140).grabLift(30).endOnGrab(false));
   driveDistance(-180, 4000, 220, 2200);
   setLiftTarget(850);
   followPath(18, PathOpts().endVel(200));

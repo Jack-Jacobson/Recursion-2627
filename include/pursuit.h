@@ -93,7 +93,7 @@ constexpr double stallMinMoveMm = 10.0;
 constexpr double stallCheckMs   = 220.0;
 
 // Field heading at start (rad, 0 = +x, CCW +)
-constexpr double startHeadingRad = 0;
+constexpr double startHeadingRad = 0.0;
 
 constexpr bool debugTelemetry = true;
 constexpr int debugPrintLoopInterval = 10;
@@ -112,6 +112,13 @@ constexpr double driveDistHeadingKp   = 6.0;    // rad/s per rad of heading erro
 constexpr double maxHoldYawRate       = 2.0;
 constexpr int    driveDistTimeoutMs   = 3000;
 constexpr double driveDistDefaultVel  = 800.0;
+
+// Segments ahead of the current one that updateRobotSegment() may jump to (nearest wins).
+constexpr int    segmentTrackWindow = 6;
+// Segments ahead of the lookahead progress searched when rejoining an off-path robot.
+constexpr int    rejoinWindowSegs   = 12;
+// Path ends once the robot is on the final approach and moves this far past its closest approach.
+constexpr double endRecedeMm        = 40.0;
 
 struct PathProgress {
     int    segment = 0;

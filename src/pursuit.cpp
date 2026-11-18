@@ -234,6 +234,31 @@ static double segmentLength(int i) {
     return sqrt(dx*dx + dy*dy);
 }
 
+// Closest point on the path at/after the current progress (limited forward window).
+static bool nearestPathPoint(const Pose& robot, Point& out) {
+    int last = progress.segment + rejoinWindowSegs;
+    if (last > activeLen - 2) last = activeLen - 2;
+
+    bool   found = false;
+    double bestD = 1e18;
+    for (int i = progress.segment; i <= last; i++) {
+        double t = fmin(fmax(projectOnSegment(robot, i), 0.0), 1.0);
+        // Never move backwards along the segment
+        if (i == progress.segment && t < progress.t) t = progress.t;
+
+        double px = activePath[i].x + t * (activePath[i + 1].x - activePath[i].x);
+        double py = activePath[i].y + t * (activePath[i + 1].y - activePath[i].y);
+        double d  = (px - robot.x)*(px - robot.x) + (py - robot.y)*(py - robot.y);
+        if (d < bestD) {
+            bestD   = d;
+            out.x   = px;
+            out.y   = py;
+            found   = true;
+        }
+    }
+    return found;
+}
+
 // Picks the furthest-along intersection of the lookahead circle with the path
 bool findLookaheadPoint(const Pose& robot, double radius, Point& out) {
     bool found = false;
@@ -286,8 +311,14 @@ bool findLookaheadPoint(const Pose& robot, double radius, Point& out) {
         out = bestPt;
         return true;
     }
-    if (haveLastLook) {
-        out = lastLook;
+
+    // Nothing within the radius (robot is off the path): rejoin at the nearest path point
+    // instead of chasing a stale target. Progress is left alone so pursuit resumes normally.
+    Point nearest;
+    if (nearestPathPoint(robot, nearest)) {
+        lastLook     = nearest;
+        haveLastLook = true;
+        out = nearest;
         return true;
     }
     return false;
@@ -554,6 +585,21 @@ static void updateRobotSegment(const Pose& robot) {
         if (!past && !closer) break;
         robotSegment = n;
     }
+
+    // Corner cutting can leave the robot perpendicular to the next segments, so the checks
+    // above never advance. Jump to the nearest segment in a forward window (never backwards).
+    int last = robotSegment + segmentTrackWindow;
+    if (last > activeLen - 2) last = activeLen - 2;
+    int    best  = robotSegment;
+    double bestD = distToSegment(robot, robotSegment);
+    for (int j = robotSegment + 1; j <= last; j++) {
+        double d = distToSegment(robot, j);
+        if (d < bestD - 1e-6) {
+            bestD = d;
+            best  = j;
+        }
+    }
+    robotSegment = best;
 }
 
 // Speed cap so the robot brakes early enough for the arc pursuit cuts through upcoming corners.
@@ -886,6 +932,7 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
     int debugCounter = 0;
 
     const Point endPt = activePath[activeLen - 1];
+    double minDistToEnd = 1e9;   // closest approach to the end point on the final approach
 
     Pose stallRef = getPose();
     double stallTimerMs = 0.0;
@@ -941,9 +988,23 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
             }
         }
 
-        // Stop once the robot crosses the line through the end point.
-        if (robotSegment == activeLen - 2 &&
-            projectOnSegment(robot, robotSegment) >= 1.0) break;
+        // Stop once the robot crosses the line through the end point. The lookahead progress
+        // counts too, in case corner cutting kept robotSegment from reaching the last segment.
+        bool onLastSeg = robotSegment == activeLen - 2 ||
+                         (progress.segment == activeLen - 2 && distToEnd < lookaheadMm);
+        if (onLastSeg && projectOnSegment(robot, activeLen - 2) >= 1.0) break;
+
+        // Backstop: on the final approach, stop once the robot starts moving away from the end.
+        if (robotSegment >= activeLen - 3) {
+            minDistToEnd = fmin(minDistToEnd, distToEnd);
+            if (minDistToEnd < lookaheadMm && distToEnd > minDistToEnd + endRecedeMm) {
+                if (debugTelemetry) {
+                    printf("end: receding from end, min:%.0f now:%.0f\n", minDistToEnd, distToEnd);
+                    fflush(stdout);
+                }
+                break;
+            }
+        }
 
         double lookahead = lookaheadFor(vel);
 
