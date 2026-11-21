@@ -85,6 +85,13 @@ void resetPoseToStart() {
     poseMutex.unlock();
 }
 
+void adjustPose(double dx, double dy) {
+    poseMutex.lock();
+    pose.x += dx;
+    pose.y += dy;
+    poseMutex.unlock();
+}
+
 void initOdom() {
     inertialSensor.calibrate();
     Brain.Screen.print("Calibrating Inertial Sensor...");

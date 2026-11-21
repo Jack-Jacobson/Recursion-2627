@@ -82,6 +82,7 @@ Rumble         At 60 s, 30 s, 10 s left
 #include "brainUI.h"
 #include "pursuit.h"
 #include "logger.h"
+#include "wallReset.h"
 
 using namespace vex;
 
@@ -117,6 +118,7 @@ static volatile bool driverAutoDone = false;
 void autonomous(void)
 {
   autoHasRun = true;
+  startRunTimer();
   /**
   // 1 = Non-Loader: same routine mirrored onto the other side.
   setPathMirror(currentAuton == 1);
@@ -134,7 +136,7 @@ void autonomous(void)
       driveDistance(90);
       break;
   }
-  */  
+
   startRunTimer();
   roller.set(true);
   wait(0.3, sec);
@@ -151,7 +153,7 @@ void autonomous(void)
   setLiftTarget(0);
   wait(0.25, sec);
   setClawState(false);
-  addFlag(path4[path4Length/2], [](){ setLiftTarget(150); });
+  add Flag(path4[path4Length/2], [](){ setLiftTarget(150); });
   followPath(4, PathOpts().reverse().maxAccel(6000).stallLastPts(6).stallMs(50));
   addFlag(path5[path5Length/2], [](){ setLiftTarget(0); });
   followPath(5, PathOpts().endVel(800).grabAt(130).grabLift(270).noStartTurn());
@@ -226,7 +228,64 @@ void autonomous(void)
   driveDistance(-200, 2000, 220, 2900);
   followPath(23, PathOpts().maxAccel(2900));
   endRunTimer();
-
+  */
+  roller.set(true);
+  wait(0.3, sec);
+  setLiftTarget(130);
+  followPath(1, PathOpts().noStartTurn().maxAccel(1800).stallLastPts(6).stallMs(50));
+  setLiftTarget(0);
+  wait(0.25, sec);
+  setClawState(false);
+  driveDistance(-300, 3000, 220, 2600);
+  setLiftTarget(0);
+  followPath(2, PathOpts().grabAt(110).grabLift(270));
+  followPath(3);
+  liftTo(0, 700);
+  setClawState(false);
+  driveDistance(-300, 4000, 220, 2600);
+  followPath(4, PathOpts().grabAt(140).grabLift(470));
+  followPath(5, PathOpts().maxAccel(900));
+  liftTo(0, 700);
+  setClawState(false);
+  followPath(6, PathOpts().maxAccel(2700).reverse().noStartTurn().endTol(200));
+  setLiftTarget(0);
+  followPath(7, PathOpts().grabAt(140).grabLift(40));
+  resetPositionFromWalls(true, true);
+  driveDistance(-230, 4000, 220, 2200);
+  setLiftTarget(650);
+  followPath(8,  PathOpts().maxAccel(1000));
+  liftTo(300, 700);
+  setClawState(false);
+  followPath(6, PathOpts().maxAccel(2700).reverse().noStartTurn().endTol(200));
+  setLiftTarget(0);
+  followPath(7, PathOpts().grabAt(140).grabLift(40));
+  resetPositionFromWalls(true, true);
+  driveDistance(-220, 4000, 220, 2200);
+  setLiftTarget(850);
+  followPath(8,  PathOpts().maxAccel(1200));
+  liftTo(300, 700);
+  setClawState(false);
+  followPath(6, PathOpts().maxAccel(2700).reverse().noStartTurn().endTol(200));
+  setLiftTarget(0);
+  followPath(7, PathOpts().grabAt(140).grabLift(40));
+  resetPositionFromWalls(true, true);
+  driveDistance(-220, 4000, 220, 2200);
+  liftForce(1);
+  followPath(8,  PathOpts().maxAccel(1200));
+  liftForce(0);
+  liftTo(300, 700);
+  setClawState(false);
+  setLiftTarget(0);
+  followPath(6, PathOpts().maxAccel(2700).reverse().noStartTurn().endTol(200));
+  liftTo(0, 300);
+  followPath(7, PathOpts().grabAt(140).grabLift(0));
+  resetPositionFromWalls(true, true);
+  setLiftTarget(40);
+  driveDistance(-220, 4000, 220, 2200);
+  setLiftTarget(400);
+  followPath(9);
+  liftTo(0, 700);
+  endRunTimer();
 }
 
 

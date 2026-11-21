@@ -12,6 +12,7 @@ using namespace vex;
 static const int    kSampleMs   = 50;
 static const int    kTempEveryMs = 1000;
 static const int    kMaxRows    = 2400;     
+static const int    kFlushRows  = 100;       // flush to SD every 5 s (100 rows at 50 ms)
 static const int    kTempCount  = 9;
 static const char*  kTempNames[kTempCount] = {
     "drive_fl", "drive_ml", "drive_bl", "drive_fr", "drive_mr", "drive_br",
@@ -91,7 +92,6 @@ static void sdWrite(const char* data, int len) {
     } else {
         w = Brain.SDcard.appendfile(logName, (uint8_t*)data, len);
     }
-    printf("[SD] write %d bytes -> %d\n", len, (int)w);
     if (w > 0) bytesWritten += w;
 }
 
@@ -100,13 +100,11 @@ static void loggerBegin() {
     bytesWritten = 0;
     logFileStarted = false;
     if (!Brain.SDcard.isInserted()) {
-        printf("[SD] no SD card inserted\n");
         Brain.Screen.printAt(10, 230, false, "LOG: no SD card      ");
         logName[0] = 0;
         return;
     }
     nextFileName(logName, sizeof(logName));
-    printf("[SD] file=%s\n", logName);
     static char hdr[256];
     int len = snprintf(hdr, sizeof(hdr), "t_ms,x,y,theta,lift,claw,period");
     for (int i = 0; i < kTempCount; i++) {
@@ -114,7 +112,6 @@ static void loggerBegin() {
     }
     len += snprintf(hdr + len, sizeof(hdr) - len, "\n");
     sdWrite(hdr, len);
-    printf("[SD] exists after header=%d\n", (int)Brain.SDcard.exists(logName));
 }
 
 void loggerFlush() {
@@ -150,7 +147,6 @@ static int loggerTask() {
 
         if (enabled && !running) {
             running = true;
-            printf("[SD] logging started (auto=%d)\n", (int)comp->isAutonomous());
             rowCount = 0;
             loggerBegin();
             startMs = timer::system();
@@ -158,7 +154,6 @@ static int loggerTask() {
             lastTempMs = 0;
         } else if (!enabled && running) {
             running = false;
-            printf("[SD] disabled, rows=%d\n", rowCount);
             loggerFlush();
         }
 
@@ -169,7 +164,7 @@ static int loggerTask() {
                 lastTempMs = t;
             }
             sampleRow(t, temps);
-            if (rowCount - rowsWritten >= 40) loggerFlush();
+            if (rowCount - rowsWritten >= kFlushRows) loggerFlush();
             uint32_t elapsed = (timer::system() - startMs) - t;
             this_thread::sleep_for(elapsed < (uint32_t)kSampleMs ? kSampleMs - elapsed : 1);
         } else {

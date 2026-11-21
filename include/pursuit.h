@@ -95,7 +95,7 @@ constexpr double stallCheckMs   = 220.0;
 // Field heading at start (rad, 0 = +x, CCW +)
 constexpr double startHeadingRad = 0.0;
 
-constexpr bool debugTelemetry = true;
+constexpr bool debugTelemetry = false;
 constexpr int debugPrintLoopInterval = 10;
 constexpr bool timeRuns = true;
 // Adds a 300 ms pause after every path to print the settled pose; leave false for real runs.
@@ -165,6 +165,10 @@ void setPathMirror(bool on);
 bool pathMirrored();
 Point mirrorPoint(const Point& p);
 void resetPoseToStart();
+
+// Shifts the pose by (dx, dy) mm. A delta, not an overwrite, so odom motion between the
+// reading and the correction is kept.
+void adjustPose(double dx, double dy);
 
 
 void updateOdom();

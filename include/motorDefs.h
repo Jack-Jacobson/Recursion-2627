@@ -19,4 +19,6 @@ extern vex::digital_out roller;
 extern vex::digital_out rightToggler;
 extern vex::digital_out leftToggler;
 extern vex::distance clawDist;
+extern vex::distance leftWallDist;
+extern vex::distance frontWallDist;
 
