@@ -24,9 +24,6 @@ static volatile double odomSpeedMmS = 0.0;
 
 
 void setPathMirror(bool on) { mirrorPaths = on; }
-
-static bool useNonWpPaths = false;
-void setNonWpPaths(bool on) { useNonWpPaths = on; }
 bool pathMirrored() { return mirrorPaths; }
 
 Point mirrorPoint(const Point& p) {
@@ -47,7 +44,7 @@ Pose getPose() {
 }
 
 Point getTarget() {
-    return (useNonWpPaths ? nwPath1 : path1)[targetIndex];
+    return path1[targetIndex];
 }
 
 bool reachedTarget(const Point& target, const Pose& pose) {
@@ -77,7 +74,7 @@ static double inertialThetaRad() {
 }
 
 void resetPoseToStart() {
-    Point start = mirrorPoint(useNonWpPaths ? nwPath1[0] : path1[0]);
+    Point start = mirrorPoint(path1[0]);
     double heading = mirrorHeading(startHeadingRad);
     poseMutex.lock();
     headingOffsetRad = heading
@@ -85,6 +82,13 @@ void resetPoseToStart() {
     pose.x     = start.x;
     pose.y     = start.y;
     pose.theta = inertialThetaRad();
+    poseMutex.unlock();
+}
+
+void adjustPose(double dx, double dy) {
+    poseMutex.lock();
+    pose.x += dx;
+    pose.y += dy;
     poseMutex.unlock();
 }
 
@@ -237,6 +241,31 @@ static double segmentLength(int i) {
     return sqrt(dx*dx + dy*dy);
 }
 
+// Closest point on the path at/after the current progress (limited forward window).
+static bool nearestPathPoint(const Pose& robot, Point& out) {
+    int last = progress.segment + rejoinWindowSegs;
+    if (last > activeLen - 2) last = activeLen - 2;
+
+    bool   found = false;
+    double bestD = 1e18;
+    for (int i = progress.segment; i <= last; i++) {
+        double t = fmin(fmax(projectOnSegment(robot, i), 0.0), 1.0);
+        // Never move backwards along the segment
+        if (i == progress.segment && t < progress.t) t = progress.t;
+
+        double px = activePath[i].x + t * (activePath[i + 1].x - activePath[i].x);
+        double py = activePath[i].y + t * (activePath[i + 1].y - activePath[i].y);
+        double d  = (px - robot.x)*(px - robot.x) + (py - robot.y)*(py - robot.y);
+        if (d < bestD) {
+            bestD   = d;
+            out.x   = px;
+            out.y   = py;
+            found   = true;
+        }
+    }
+    return found;
+}
+
 // Picks the furthest-along intersection of the lookahead circle with the path
 bool findLookaheadPoint(const Pose& robot, double radius, Point& out) {
     bool found = false;
@@ -289,8 +318,14 @@ bool findLookaheadPoint(const Pose& robot, double radius, Point& out) {
         out = bestPt;
         return true;
     }
-    if (haveLastLook) {
-        out = lastLook;
+
+    // Nothing within the radius (robot is off the path): rejoin at the nearest path point
+    // instead of chasing a stale target. Progress is left alone so pursuit resumes normally.
+    Point nearest;
+    if (nearestPathPoint(robot, nearest)) {
+        lastLook     = nearest;
+        haveLastLook = true;
+        out = nearest;
         return true;
     }
     return false;
@@ -557,6 +592,21 @@ static void updateRobotSegment(const Pose& robot) {
         if (!past && !closer) break;
         robotSegment = n;
     }
+
+    // Corner cutting can leave the robot perpendicular to the next segments, so the checks
+    // above never advance. Jump to the nearest segment in a forward window (never backwards).
+    int last = robotSegment + segmentTrackWindow;
+    if (last > activeLen - 2) last = activeLen - 2;
+    int    best  = robotSegment;
+    double bestD = distToSegment(robot, robotSegment);
+    for (int j = robotSegment + 1; j <= last; j++) {
+        double d = distToSegment(robot, j);
+        if (d < bestD - 1e-6) {
+            bestD = d;
+            best  = j;
+        }
+    }
+    robotSegment = best;
 }
 
 // Speed cap so the robot brakes early enough for the arc pursuit cuts through upcoming corners.
@@ -812,16 +862,14 @@ void driveDistance(double distMm, double maxVel, double stallMs, double maxAccel
 }
 
 void followPath(int pathNumber, const PathOpts& opts) {
-    const PathRef* set = useNonWpPaths ? nwPaths : paths;
-    int count = useNonWpPaths ? nwPathCount : pathCount;
-    if (pathNumber < 1 || pathNumber > count) {
+    if (pathNumber < 1 || pathNumber > pathCount) {
         if (debugTelemetry) {
-            printf("followPath(%d): no such path (have 1-%d)\n", pathNumber, count);
+            printf("followPath(%d): no such path (have 1-%d)\n", pathNumber, pathCount);
             fflush(stdout);
         }
         return;
     }
-    const PathRef& p = set[pathNumber - 1];
+    const PathRef& p = paths[pathNumber - 1];
     followPath(p.pts, p.len, opts);
 }
 
@@ -891,6 +939,7 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
     int debugCounter = 0;
 
     const Point endPt = activePath[activeLen - 1];
+    double minDistToEnd = 1e9;   // closest approach to the end point on the final approach
 
     Pose stallRef = getPose();
     double stallTimerMs = 0.0;
@@ -946,9 +995,23 @@ void followPath(const Point* pts, int len, const PathOpts& opts) {
             }
         }
 
-        // Stop once the robot crosses the line through the end point.
-        if (robotSegment == activeLen - 2 &&
-            projectOnSegment(robot, robotSegment) >= 1.0) break;
+        // Stop once the robot crosses the line through the end point. The lookahead progress
+        // counts too, in case corner cutting kept robotSegment from reaching the last segment.
+        bool onLastSeg = robotSegment == activeLen - 2 ||
+                         (progress.segment == activeLen - 2 && distToEnd < lookaheadMm);
+        if (onLastSeg && projectOnSegment(robot, activeLen - 2) >= 1.0) break;
+
+        // Backstop: on the final approach, stop once the robot starts moving away from the end.
+        if (robotSegment >= activeLen - 3) {
+            minDistToEnd = fmin(minDistToEnd, distToEnd);
+            if (minDistToEnd < lookaheadMm && distToEnd > minDistToEnd + endRecedeMm) {
+                if (debugTelemetry) {
+                    printf("end: receding from end, min:%.0f now:%.0f\n", minDistToEnd, distToEnd);
+                    fflush(stdout);
+                }
+                break;
+            }
+        }
 
         double lookahead = lookaheadFor(vel);
 

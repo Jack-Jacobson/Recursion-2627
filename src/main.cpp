@@ -81,6 +81,8 @@ Rumble         At 60 s, 30 s, 10 s left
 #include "lift.h"
 #include "brainUI.h"
 #include "pursuit.h"
+#include "logger.h"
+#include "wallReset.h"
 
 using namespace vex;
 
@@ -93,6 +95,7 @@ void pre_auton(void)
   initOdom();
   vex::thread odomThread(updateOdom);
   startLift();
+  loggerInit(Competition);
 }
 
 void scorePin(void)
@@ -118,21 +121,21 @@ void nonWpAuton(void)
   startRunTimer();
   roller.set(true);
   wait(0.3, sec);
-  setLiftTarget(120);
+  setLiftTarget(130);
   followPath(1, PathOpts().noStartTurn().maxAccel(1800).stallLastPts(6).stallMs(50));
   setLiftTarget(0);
   wait(0.25, sec);
   setClawState(false);
   driveDistance(-300, 3000, 220, 2600);
   setLiftTarget(0);
-  followPath(2, PathOpts().grabAt(125).grabLift(270));
+  followPath(2, PathOpts().grabAt(110).grabLift(270));
   followPath(3);
-  liftTo(0, 500);
+  liftTo(0, 700);
   setClawState(false);
   driveDistance(-300, 4000, 220, 2600);
-  followPath(4, PathOpts().grabAt(140).grabLift(450));
-  followPath(5);
-  liftTo(0, 500);
+  followPath(4, PathOpts().grabAt(140).grabLift(470));
+  followPath(5, PathOpts().maxAccel(900));
+  liftTo(0, 700);
   setClawState(false);
   driveDistance(-550, 4000, 220, 2600);
   turnToHeading(180);
@@ -151,7 +154,7 @@ void awpAuton(void)
   wait(0.25, sec);
   setClawState(false);
   driveDistance(-300, 3000, 220, 2600);
-  setLiftTarget(0);
+  setLiftTarget(122);
   followPath(2, PathOpts().startTurnTol(5).startTurnAccel(30).grabAt(110).grabLift(270).endVel(500));
   addFlag(path3[path3Length / 2], []() { setLiftTarget(190); });
   followPath(3, PathOpts().noStartTurn());
@@ -179,8 +182,6 @@ void awpAuton(void)
 void autonomous(void)
 {
   autoHasRun = true;
-  // currentAuton: 0 = AWP (default), 1 = Non-WP.
-  setNonWpPaths(currentAuton == 1);
   resetPoseToStart();
   if (currentAuton == 1) {
     nonWpAuton();
